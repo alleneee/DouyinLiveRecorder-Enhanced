@@ -1,0 +1,6 @@
+{
+  "access_key_id": "your_access_key_id",
+  "access_key_secret": "your_access_key_secret",
+  "endpoint": "oss-cn-beijing.aliyuncs.com",
+  "bucket_name": "your_bucket_name"
+}

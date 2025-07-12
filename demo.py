@@ -19,7 +19,7 @@ LIVE_STREAM_CONFIG = {
         "func": spider.get_kuaishou_stream_data,
     },
     "huya": {
-        "url": "https://www.huya.com/116",
+        "url": "https://www.huya.com/lpl",
         "func": spider.get_huya_app_stream_url,
     },
     "douyu": {
@@ -211,6 +211,6 @@ def test_live_stream(platform_name: str, proxy_addr=None, cookies=None) -> None:
 
 
 if __name__ == "__main__":
-    platform = "douyin"
+    platform = "huya"
     test_live_stream(platform)
     

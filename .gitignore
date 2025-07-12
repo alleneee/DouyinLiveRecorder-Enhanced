@@ -165,3 +165,9 @@ cython_debug/
 #.idea/
 
 backup_config/
+
+# 敏感配置文件
+oss_config.json
+config/config.ini
+config/URL_config.ini
+.claude/

@@ -100,7 +100,11 @@ def display_info() -> None:
             print(f"同一时间访问网络的线程数: {max_request}", end=" | ")
             print(f"是否开启代理录制: {'是' if use_proxy else '否'}", end=" | ")
             if split_video_by_time:
-                print(f"录制分段开启: {split_time}秒", end=" | ")
+                # 修改显示逻辑，音频始终分段，视频不分段
+                if video_save_type in ["MP3音频", "M4A音频"]:
+                    print(f"录制分段开启: 音频5小时", end=" | ")
+                else:
+                    print("录制分段开启: 否（视频不分段）", end=" | ")
             else:
                 print("录制分段开启: 否", end=" | ")
             if create_time_file:
@@ -1150,54 +1154,37 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                     try:
                                         now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
                                         extension = "mp3" if "m4a" not in video_save_type.lower () else "m4a"
-                                        name_format = "_%03d" if split_video_by_time else ""
+                                        # 音频始终使用分段，每5小时切分
+                                        name_format = "_%03d"
                                         save_file_path = (f"{full_path}/{anchor_name}_{title_in_name}{now}"
                                                           f"{name_format}.{extension}")
 
-                                        if split_video_by_time:
-                                            print(f'\r{anchor_name} 准备开始录制音频: {save_file_path}')
+                                        # 音频始终分段，每5小时（18000秒）
+                                        print(f'\r{anchor_name} 准备开始录制音频: {save_file_path}')
+                                        audio_split_time = "18000"  # 5小时
 
-                                            if "MP3" in video_save_type:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "libmp3lame",
-                                                    "-ab", "320k",
-                                                    "-f", "segment",
-                                                    "-segment_time", split_time,
-                                                    "-reset_timestamps", "1",
-                                                    save_file_path,
-                                                ]
-                                            else:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "aac",
-                                                    "-bsf:a", "aac_adtstoasc",
-                                                    "-ab", "320k",
-                                                    "-f", "segment",
-                                                    "-segment_time", split_time,
-                                                    "-segment_format", 'mpegts',
-                                                    "-reset_timestamps", "1",
-                                                    save_file_path,
-                                                ]
-
+                                        if "MP3" in video_save_type:
+                                            command = [
+                                                "-map", "0:a",
+                                                "-c:a", "libmp3lame",
+                                                "-ab", "320k",
+                                                "-f", "segment",
+                                                "-segment_time", audio_split_time,
+                                                "-reset_timestamps", "1",
+                                                save_file_path,
+                                            ]
                                         else:
-                                            if "MP3" in video_save_type:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "libmp3lame",
-                                                    "-ab", "320k",
-                                                    save_file_path,
-                                                ]
-
-                                            else:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "aac",
-                                                    "-bsf:a", "aac_adtstoasc",
-                                                    "-ab", "320k",
-                                                    "-movflags", "+faststart",
-                                                    save_file_path,
-                                                ]
+                                            command = [
+                                                "-map", "0:a",
+                                                "-c:a", "aac",
+                                                "-bsf:a", "aac_adtstoasc",
+                                                "-ab", "320k",
+                                                "-f", "segment",
+                                                "-segment_time", audio_split_time,
+                                                "-segment_format", 'mpegts',
+                                                "-reset_timestamps", "1",
+                                                save_file_path,
+                                            ]
 
                                         ffmpeg_command.extend(command)
                                         comment_end = check_subprocess(
@@ -1252,27 +1239,12 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
 
                                     try:
                                         if converts_to_mp4:
-                                            seg_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mp4"
-                                            if split_video_by_time:
-                                                segment_video(
-                                                    save_file_path, seg_file_path,
-                                                    segment_format='mp4', segment_time=split_time,
-                                                    is_original_delete=delete_origin_file
-                                                )
-                                            else:
-                                                threading.Thread(
-                                                    target=converts_mp4,
-                                                    args=(save_file_path, delete_origin_file)
-                                                ).start()
-
-                                        else:
-                                            seg_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.flv"
-                                            if split_video_by_time:
-                                                segment_video(
-                                                    save_file_path, seg_file_path,
-                                                    segment_format='flv', segment_time=split_time,
-                                                    is_original_delete=delete_origin_file
-                                                )
+                                            # 视频不分段，直接转换为单个MP4文件
+                                            threading.Thread(
+                                                target=converts_mp4,
+                                                args=(save_file_path, delete_origin_file)
+                                            ).start()
+                                        # 移除else分支，FLV格式视频不分段
                                     except Exception as e:
                                         logger.error(f"转码失败: {e} ")
 
@@ -1282,30 +1254,15 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                     save_file_path = full_path + '/' + filename
 
                                     try:
-                                        if split_video_by_time:
-                                            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mkv"
-                                            command = [
-                                                "-flags", "global_header",
-                                                "-c:v", "copy",
-                                                "-c:a", "aac",
-                                                "-map", "0",
-                                                "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", "matroska",
-                                                "-reset_timestamps", "1",
-                                                save_file_path,
-                                            ]
-
-                                        else:
-                                            command = [
-                                                "-flags", "global_header",
-                                                "-map", "0",
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-f", "matroska",
-                                                "{path}".format(path=save_file_path),
-                                            ]
+                                        # MKV视频不分段
+                                        command = [
+                                            "-flags", "global_header",
+                                            "-map", "0",
+                                            "-c:v", "copy",
+                                            "-c:a", "copy",
+                                            "-f", "matroska",
+                                            "{path}".format(path=save_file_path),
+                                        ]
                                         ffmpeg_command.extend(command)
 
                                         comment_end = check_subprocess(
@@ -1330,27 +1287,65 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                     save_file_path = full_path + '/' + filename
 
                                     try:
-                                        if split_video_by_time:
-                                            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mp4"
+                                        # MP4视频不分段
+                                        command = [
+                                            "-map", "0",
+                                            "-c:v", "copy",
+                                            "-c:a", "copy",
+                                            "-f", "mp4",
+                                            save_file_path,
+                                        ]
+
+                                        ffmpeg_command.extend(command)
+                                        comment_end = check_subprocess(
+                                            record_name,
+                                            record_url,
+                                            ffmpeg_command,
+                                            video_save_type,
+                                            custom_script
+                                        )
+                                        if comment_end:
+                                            return
+
+                                    except subprocess.CalledProcessError as e:
+                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                                        with max_request_lock:
+                                            error_count += 1
+                                            error_window.append(1)
+
+                                elif video_save_type == "MP3音频" or video_save_type == "M4A音频":
+                                    # 处理音频格式录制（非only_audio_record平台）
+                                    now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+                                    extension = "mp3" if video_save_type == "MP3音频" else "m4a"
+                                    # 音频始终使用分段，每5小时切分
+                                    name_format = "_%03d"
+                                    save_file_path = (f"{full_path}/{anchor_name}_{title_in_name}{now}"
+                                                      f"{name_format}.{extension}")
+
+                                    print(f'\r{anchor_name} 准备开始录制音频: {save_file_path}')
+                                    audio_split_time = "18000"  # 5小时
+
+                                    try:
+                                        if video_save_type == "MP3音频":
                                             command = [
-                                                "-c:v", "copy",
-                                                "-c:a", "aac",
-                                                "-map", "0",
+                                                "-map", "0:a",
+                                                "-c:a", "libmp3lame",
+                                                "-ab", "320k",
                                                 "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", "mp4",
+                                                "-segment_time", audio_split_time,
                                                 "-reset_timestamps", "1",
-                                                "-movflags", "+frag_keyframe+empty_moov",
                                                 save_file_path,
                                             ]
-
                                         else:
                                             command = [
-                                                "-map", "0",
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-f", "mp4",
+                                                "-map", "0:a",
+                                                "-c:a", "aac",
+                                                "-bsf:a", "aac_adtstoasc",
+                                                "-ab", "320k",
+                                                "-f", "segment",
+                                                "-segment_time", audio_split_time,
+                                                "-segment_format", 'mpegts',
+                                                "-reset_timestamps", "1",
                                                 save_file_path,
                                             ]
 
@@ -1372,87 +1367,39 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                             error_window.append(1)
 
                                 else:
-                                    if split_video_by_time:
-                                        now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                        filename = anchor_name + f'_{title_in_name}' + now + ".ts"
-                                        print(f'{rec_info}/{filename}')
+                                    # TS格式视频不分段
+                                    filename = anchor_name + f'_{title_in_name}' + now + ".ts"
+                                    print(f'{rec_info}/{filename}')
+                                    save_file_path = full_path + '/' + filename
 
-                                        try:
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.ts"
-                                            command = [
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-map", "0",
-                                                "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", 'mpegts',
-                                                "-reset_timestamps", "1",
-                                                save_file_path,
-                                            ]
+                                    try:
+                                        command = [
+                                            "-c:v", "copy",
+                                            "-c:a", "copy",
+                                            "-map", "0",
+                                            "-f", "mpegts",
+                                            save_file_path,
+                                        ]
 
-                                            ffmpeg_command.extend(command)
-                                            comment_end = check_subprocess(
-                                                record_name,
-                                                record_url,
-                                                ffmpeg_command,
-                                                video_save_type,
-                                                custom_script
-                                            )
-                                            if comment_end:
-                                                if converts_to_mp4:
-                                                    file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
-                                                    prefix = os.path.basename(save_file_path).rsplit('_', maxsplit=1)[0]
-                                                    for path in file_paths:
-                                                        if prefix in path:
-                                                            try:
-                                                                threading.Thread(
-                                                                    target=converts_mp4,
-                                                                    args=(path, delete_origin_file)
-                                                                ).start()
-                                                            except subprocess.CalledProcessError as e:
-                                                                logger.error(f"转码失败: {e} ")
-                                                return
+                                        ffmpeg_command.extend(command)
+                                        comment_end = check_subprocess(
+                                            record_name,
+                                            record_url,
+                                            ffmpeg_command,
+                                            video_save_type,
+                                            custom_script
+                                        )
+                                        if comment_end:
+                                            threading.Thread(
+                                                target=converts_mp4, args=(save_file_path, delete_origin_file)
+                                            ).start()
+                                            return
 
-                                        except subprocess.CalledProcessError as e:
-                                            logger.error(
-                                                f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                            with max_request_lock:
-                                                error_count += 1
-                                                error_window.append(1)
-
-                                    else:
-                                        filename = anchor_name + f'_{title_in_name}' + now + ".ts"
-                                        print(f'{rec_info}/{filename}')
-                                        save_file_path = full_path + '/' + filename
-
-                                        try:
-                                            command = [
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-map", "0",
-                                                "-f", "mpegts",
-                                                save_file_path,
-                                            ]
-
-                                            ffmpeg_command.extend(command)
-                                            comment_end = check_subprocess(
-                                                record_name,
-                                                record_url,
-                                                ffmpeg_command,
-                                                video_save_type,
-                                                custom_script
-                                            )
-                                            if comment_end:
-                                                threading.Thread(
-                                                    target=converts_mp4, args=(save_file_path, delete_origin_file)
-                                                ).start()
-                                                return
-
-                                        except subprocess.CalledProcessError as e:
-                                            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                            with max_request_lock:
-                                                error_count += 1
-                                                error_window.append(1)
+                                    except subprocess.CalledProcessError as e:
+                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                                        with max_request_lock:
+                                            error_count += 1
+                                            error_window.append(1)
 
                                 count_time = time.time()
 
