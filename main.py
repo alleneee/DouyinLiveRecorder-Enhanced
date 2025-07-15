@@ -332,7 +332,7 @@ def push_message(record_name: str, live_url: str, content: str) -> None:
     msg_title = push_message_title.strip() or "直播间状态更新通知"
     push_functions = {
         '微信': lambda: xizhi(xizhi_api_url, msg_title, content),
-        '钉钉': lambda: dingtalk(dingtalk_api_url, content, dingtalk_phone_num, dingtalk_is_atall),
+        '钉钉': lambda: dingtalk(dingtalk_api_url, content, dingtalk_phone_num, dingtalk_is_atall, dingtalk_secret),
         '邮箱': lambda: send_email(
             email_host, login_email, email_password, sender_email, sender_name,
             to_email, msg_title, content, smtp_port, open_smtp_ssl
@@ -401,24 +401,31 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
         create_var[subs_thread_name].daemon = True
         create_var[subs_thread_name].start()
 
+    # 标记变量：是否因注释/退出而提前终止
+    interrupted_by_comment = False
+
     while process.poll() is None:
         if record_url in url_comments or exit_recording:
+            interrupted_by_comment = True
             color_obj.print_colored(f"[{record_name}]录制时已被注释,本条线程将会退出", color_obj.YELLOW)
             clear_record_info(record_name, record_url)
-            # process.terminate()
+            # 发送终止信号
             if os.name == 'nt':
                 if process.stdin:
                     process.stdin.write(b'q')
                     process.stdin.close()
             else:
                 process.send_signal(signal.SIGINT)
+            # 等待 FFmpeg 进程完全退出，再进行后置处理
             process.wait()
-            return True
+            break
         time.sleep(1)
 
     return_code = process.returncode
     stop_time = time.strftime('%Y-%m-%d %H:%M:%S')
-    if return_code == 0:
+
+    # 成功录制或被注释正常结束，都执行后置处理
+    if return_code == 0 or interrupted_by_comment:
         if converts_to_mp4 and save_type == 'TS':
             if split_video_by_time:
                 file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
@@ -428,10 +435,26 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
                         threading.Thread(target=converts_mp4, args=(path, delete_origin_file)).start()
             else:
                 threading.Thread(target=converts_mp4, args=(save_file_path, delete_origin_file)).start()
+
         print(f"\n{record_name} {stop_time} 直播录制完成\n")
 
         if script_command:
             logger.debug("开始执行脚本命令!")
+            # 提取 room_id，优先匹配数字串（适用于抖音等），否则使用 url 最后一段
+            import re, urllib.parse
+            _room_id = "unknown"
+            m = re.search(r'(\d{5,})', record_url)
+            if m:
+                _room_id = m.group(1)
+            else:
+                _room_id = urllib.parse.urlparse(record_url).path.rsplit('/', maxsplit=1)[-1] or "unknown"
+
+            # 获取录制开始时间
+            record_start_time = "unknown"
+            if record_name in recording_time_list:
+                start_time_obj = recording_time_list[record_name][0]
+                record_start_time = start_time_obj.strftime('%Y-%m-%d_%H-%M-%S')
+
             if "python" in script_command:
                 params = [
                     f'--record_name "{record_name}"',
@@ -439,6 +462,8 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
                     f'--save_type {save_type}',
                     f'--split_video_by_time {split_video_by_time}',
                     f'--converts_to_mp4 {converts_to_mp4}',
+                    f'--room_id {_room_id}',
+                    f'--record_start_time "{record_start_time}"'
                 ]
             else:
                 params = [
@@ -446,17 +471,18 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
                     f'"{save_file_path}"',
                     save_type,
                     f'split_video_by_time:{split_video_by_time}',
-                    f'converts_to_mp4:{converts_to_mp4}'
+                    f'converts_to_mp4:{converts_to_mp4}',
+                    f'room_id:{_room_id}',
+                    f'record_start_time:{record_start_time}'
                 ]
             script_command = script_command.strip() + ' ' + ' '.join(params)
             run_script(script_command)
             logger.debug("脚本命令执行结束!")
-
     else:
         color_obj.print_colored(f"\n{record_name} {stop_time} 直播录制出错,返回码: {return_code}\n", color_obj.RED)
 
     recording.discard(record_name)
-    return False
+    return True
 
 
 def clean_name(input_text):
@@ -968,7 +994,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                             error_window.append(1)
                     else:
                         anchor_name = clean_name(anchor_name)
-                        record_name = f'序号{count_variable} {anchor_name}'
+                        record_name = anchor_name
 
                         if record_url in url_comments:
                             print(f"[{anchor_name}]已被注释,本条线程将会退出")
@@ -995,7 +1021,8 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                         push_content = over_push_message_text
 
                                     push_content = (push_content.replace('[直播间名称]', record_name).
-                                                    replace('[时间]', push_at))
+                                                    replace('[时间]', push_at).
+                                                    replace('{record_name}', record_name))
                                     threading.Thread(
                                         target=push_message,
                                         args=(record_name, record_url, push_content.replace(r'\n', '\n')),
@@ -1014,7 +1041,8 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                         push_content = begin_push_message_text
 
                                     push_content = (push_content.replace('[直播间名称]', record_name).
-                                                    replace('[时间]', push_at))
+                                                    replace('[时间]', push_at).
+                                                    replace('{record_name}', record_name))
                                     threading.Thread(
                                         target=push_message,
                                         args=(record_name, record_url, push_content.replace(r'\n', '\n')),
@@ -1635,6 +1663,7 @@ while True:
     extra_enable_proxy_platform_list = extra_enable_proxy.replace('，', ',').split(',') if extra_enable_proxy else None
     live_status_push = read_config_value(config, '推送配置', '直播状态推送渠道', "")
     dingtalk_api_url = read_config_value(config, '推送配置', '钉钉推送接口链接', "")
+    dingtalk_secret = read_config_value(config, '推送配置', '钉钉签名密钥', "")
     xizhi_api_url = read_config_value(config, '推送配置', '微信推送接口链接', "")
     bark_msg_api = read_config_value(config, '推送配置', 'bark推送接口链接', "")
     bark_msg_level = read_config_value(config, '推送配置', 'bark推送中断级别', "active")
@@ -1757,7 +1786,8 @@ while True:
 
                 is_comment_line = line.startswith("#")
                 if is_comment_line:
-                    line = line.lstrip('#')
+                    # 移除开头的 # 号后，再次去除可能存在的空白字符，防止出现首位空格导致匹配失败
+                    line = line.lstrip('#').strip()
 
                 if re.search('[,，]', line):
                     split_line = re.split('[,，]', line)

@@ -13,6 +13,10 @@ import base64
 import urllib.request
 import urllib.error
 import smtplib
+import hmac
+import hashlib
+import time
+import urllib.parse
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -22,11 +26,21 @@ opener = urllib.request.build_opener(no_proxy_handler)
 headers: Dict[str, str] = {'Content-Type': 'application/json'}
 
 
-def dingtalk(url: str, content: str, number: str = None, is_atall: bool = False) -> Dict[str, Any]:
+def dingtalk(url: str, content: str, number: str = None, is_atall: bool = False, secret: str = None) -> Dict[str, Any]:
     success = []
     error = []
     api_list = url.replace('，', ',').split(',') if url.strip() else []
     for api in api_list:
+        # 如果提供了签名密钥，计算签名并添加到URL
+        if secret:
+            timestamp = str(round(time.time() * 1000))
+            secret_enc = secret.encode('utf-8')
+            string_to_sign = f'{timestamp}\\n{secret}'
+            string_to_sign_enc = string_to_sign.encode('utf-8')
+            hmac_code = hmac.new(secret_enc, string_to_sign_enc, digestmod=hashlib.sha256).digest()
+            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+            api = f'{api}&timestamp={timestamp}&sign={sign}'
+        
         json_data = {
             'msgtype': 'text',
             'text': {
