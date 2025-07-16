@@ -27,9 +27,22 @@ import urllib.request
 from urllib.error import URLError, HTTPError
 from typing import Any
 import configparser
+import platform
+
+# 修复 macOS 上的 PATH 问题，确保能找到 Homebrew 安装的工具
+if platform.system() == "Darwin":
+    homebrew_paths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"]
+    current_path = os.environ.get('PATH', '')
+    path_parts = current_path.split(os.pathsep)
+
+    for path in reversed(homebrew_paths):
+        if path not in path_parts and os.path.exists(path):
+            path_parts.insert(0, path)
+
+    os.environ['PATH'] = os.pathsep.join(path_parts)
 from src import spider, stream
 from src.proxy import ProxyDetector
-from src.utils import logger
+from src.utils import logger, status_logger
 from src import utils
 from msg_push import (
     dingtalk, xizhi, tg_bot, send_email, bark, ntfy
@@ -90,52 +103,101 @@ signal.signal(signal.SIGTERM, signal_handler)
 def display_info() -> None:
     global start_display_time
     time.sleep(5)
+    
+    # 用于在控制台显示的最后一行状态信息
+    last_console_line = ""
+    
     while True:
         try:
             sys.stdout.flush()
             time.sleep(5)
-            if Path(sys.executable).name != 'pythonw.exe':
-                os.system(clear_command)
-            print(f"\r共监测{monitoring}个直播中", end=" | ")
-            print(f"同一时间访问网络的线程数: {max_request}", end=" | ")
-            print(f"是否开启代理录制: {'是' if use_proxy else '否'}", end=" | ")
+            
+            # 构建状态信息
+            status_parts = []
+            status_parts.append(f"共监测{monitoring}个直播中")
+            status_parts.append(f"同一时间访问网络的线程数: {max_request}")
+            status_parts.append(f"是否开启代理录制: {'是' if use_proxy else '否'}")
+            
             if split_video_by_time:
                 # 修改显示逻辑，音频始终分段，视频不分段
                 if video_save_type in ["MP3音频", "M4A音频"]:
-                    print(f"录制分段开启: 音频5小时", end=" | ")
+                    status_parts.append("录制分段开启: 音频5小时")
                 else:
-                    print("录制分段开启: 否（视频不分段）", end=" | ")
+                    status_parts.append("录制分段开启: 否（视频不分段）")
             else:
-                print("录制分段开启: 否", end=" | ")
+                status_parts.append("录制分段开启: 否")
+                
             if create_time_file:
-                print("是否生成时间文件: 是", end=" | ")
-            print(f"录制视频质量为: {video_record_quality}", end=" | ")
-            print(f"录制视频格式为: {video_save_type}", end=" | ")
-            print(f"目前瞬时错误数为: {error_count}", end=" | ")
+                status_parts.append("是否生成时间文件: 是")
+                
+            status_parts.append(f"录制视频质量为: {video_record_quality}")
+            status_parts.append(f"录制视频格式为: {video_save_type}")
+            status_parts.append(f"目前瞬时错误数为: {error_count}")
+            
             now = time.strftime("%H:%M:%S", time.localtime())
-            print(f"当前时间: {now}")
+            status_parts.append(f"当前时间: {now}")
+            
+            status_message = " | ".join(status_parts)
+            
+            # 记录到日志文件
+            if status_log_to_file:
+                status_logger.info(status_message)
+            
+            # 根据配置决定是否在控制台显示
+            if status_console_display:
+                if Path(sys.executable).name != 'pythonw.exe':
+                    # 清除上一行状态信息
+                    if last_console_line:
+                        print("\r" + " " * len(last_console_line) + "\r", end="")
+                    # 显示新的状态信息，不换行
+                    print(f"\r{status_message}", end="", flush=True)
+                    last_console_line = status_message
 
+            # 处理录制状态信息
             if len(recording) == 0:
                 time.sleep(5)
                 if monitoring == 0:
-                    print("\r没有正在监测和录制的直播")
+                    message = "没有正在监测和录制的直播"
+                    if status_log_to_file:
+                        status_logger.info(message)
+                    if status_console_display:
+                        print(f"\n{message}")
                 else:
-                    print(f"\r没有正在录制的直播 循环监测间隔时间：{delay_default}秒")
+                    message = f"没有正在录制的直播 循环监测间隔时间：{delay_default}秒"
+                    if status_log_to_file:
+                        status_logger.info(message)
+                    if status_console_display:
+                        print(f"\n{message}")
             else:
                 now_time = datetime.datetime.now()
-                print("x" * 60)
                 no_repeat_recording = list(set(recording))
-                print(f"正在录制{len(no_repeat_recording)}个直播: ")
+                
+                recording_info = []
+                recording_info.append("x" * 60)
+                recording_info.append(f"正在录制{len(no_repeat_recording)}个直播: ")
+                
                 for recording_live in no_repeat_recording:
                     rt, qa = recording_time_list[recording_live]
                     have_record_time = now_time - rt
-                    print(f"{recording_live}[{qa}] 正在录制中 {str(have_record_time).split('.')[0]}")
-
-                # print('\n本软件已运行：'+str(now_time - start_display_time).split('.')[0])
-                print("x" * 60)
+                    recording_info.append(f"{recording_live}[{qa}] 正在录制中 {str(have_record_time).split('.')[0]}")
+                
+                recording_info.append("x" * 60)
+                
+                # 记录到日志文件
+                if status_log_to_file:
+                    for info in recording_info:
+                        status_logger.info(info)
+                
+                # 根据配置决定是否在控制台显示
+                if status_console_display:
+                    for info in recording_info:
+                        print(info)
+                
                 start_display_time = now_time
+
         except Exception as e:
-            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            logger.error(f"状态信息显示出错: {e}")
+            time.sleep(5)
 
 
 def update_file(file_path: str, old_str: str, new_str: str, start_str: str = None) -> str | None:
@@ -1418,9 +1480,10 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                             custom_script
                                         )
                                         if comment_end:
-                                            threading.Thread(
-                                                target=converts_mp4, args=(save_file_path, delete_origin_file)
-                                            ).start()
+                                            if converts_to_mp4:
+                                                threading.Thread(
+                                                    target=converts_mp4, args=(save_file_path, delete_origin_file)
+                                                ).start()
                                             return
 
                                     except subprocess.CalledProcessError as e:
@@ -1571,6 +1634,8 @@ def read_config_value(config_parser: configparser.RawConfigParser, section: str,
             config_parser.add_section('Authorization')
         if '账号密码' not in config_parser.sections():
             config_parser.add_section('账号密码')
+        if 'OSS配置' not in config_parser.sections():
+            config_parser.add_section('OSS配置')
         return config_parser.get(section, option)
     except (configparser.NoSectionError, configparser.NoOptionError):
         config_parser.set(section, option, str(default_value))
@@ -1644,6 +1709,9 @@ while True:
     local_delay_default = int(read_config_value(config, '录制设置', '排队读取网址时间(秒)', 0))
     loop_time = options.get(read_config_value(config, '录制设置', '是否显示循环秒数', "否"), False)
     show_url = options.get(read_config_value(config, '录制设置', '是否显示直播源地址', "否"), False)
+    # 添加状态日志相关配置
+    status_console_display = options.get(read_config_value(config, '录制设置', '状态信息显示在控制台(是/否)', "否"), False)
+    status_log_to_file = options.get(read_config_value(config, '录制设置', '状态信息记录到日志文件(是/否)', "是"), True)
     split_video_by_time = options.get(read_config_value(config, '录制设置', '分段录制是否开启', "否"), False)
     enable_https_recording = options.get(read_config_value(config, '录制设置', '是否强制启用https录制', "否"), False)
     disk_space_limit = float(read_config_value(config, '录制设置', '录制空间剩余阈值(gb)', 1.0))

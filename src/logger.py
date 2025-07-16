@@ -41,3 +41,17 @@ logger.add(
     rotation="300 KB",
     encoding='utf-8'
 )
+
+# 添加专门的状态监控日志器
+status_logger = logger.bind(name="status")
+status_logger.add(
+    f"{script_path}/logs/status.log",
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
+    filter=lambda record: record.get("extra", {}).get("name") == "status",
+    serialize=False,
+    enqueue=True,
+    retention=7,  # 保留7天
+    rotation="1 MB",  # 每1MB轮转
+    encoding='utf-8'
+)

@@ -1,0 +1,33 @@
+---
+title: Project Structure Guide
+---
+
+# DouyinLiveRecorder Project Structure Guide
+
+## Core Components
+
+### Main Entry Point
+- [main.py](mdc:main.py) - Primary application entry point for live streaming recording
+- [post_process.py](mdc:post_process.py) - Post-processing pipeline for recorded videos
+
+### Configuration Management
+- [config_reader.py](mdc:config_reader.py) - Centralized configuration reader with BOM character handling
+- [config/config.ini](mdc:config/config.ini) - Main configuration file (uses utf-8-sig encoding)
+- [config_manager.py](mdc:config_manager.py) - Configuration management utilities
+
+### Core Services
+- [api_client.py](mdc:api_client.py) - API integration for notifications and token management
+- [src/logger.py](mdc:src/logger.py) - Enhanced logging system with status log separation
+- [msg_push.py](mdc:msg_push.py) - Message pushing and notification services
+
+### Key Directories
+- `src/` - Core source code modules
+- `config/` - Configuration files and templates
+- `logs/` - Application and status logs (auto-rotated)
+- `downloads/` - Downloaded live stream files
+- `i18n/` - Internationalization files
+
+## Important Files
+- [requirements.txt](mdc:requirements.txt) - Python dependencies
+- [Dockerfile](mdc:Dockerfile) - Container configuration
+- [docker-compose.yaml](mdc:docker-compose.yaml) - Multi-container setup

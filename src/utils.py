@@ -12,7 +12,7 @@ import traceback
 from typing import Any
 from collections import OrderedDict
 import execjs
-from .logger import logger
+from .logger import logger, status_logger
 import configparser
 
 OptionalStr = str | None

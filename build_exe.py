@@ -105,11 +105,11 @@ def create_spec_file():
 
     # 检查数据文件是否存在
     # 注意：不包含config目录，因为程序会在运行时在exe所在目录创建配置文件
+    # OSS配置现在统一在config.ini中，不再需要单独的JSON文件
     data_files = []
     potential_data = [
         ('src/javascript', 'src/javascript'),
         ('i18n', 'i18n'),
-        ('oss_config.json.example', '.'),
     ]
 
     for src, dst in potential_data:
@@ -320,7 +320,6 @@ def create_release_package():
     files_to_copy = [
         "README.md",
         "LICENSE",
-        "oss_config.json.example",
         "StopRecording.vbs",
         "OSS_PATH_TEMPLATE_GUIDE.md",
     ]
@@ -470,6 +469,19 @@ popkontv密码 =
 twitcasting账号类型 = normal
 twitcasting账号 =
 twitcasting密码 =
+
+[OSS配置]
+access_key_id =
+access_key_secret =
+endpoint = oss-cn-hangzhou.aliyuncs.com
+bucket_name =
+path_template = live-records/{date}/{room_id}-{streamer_name}/
+enable_upload = 否
+upload_immediately = 否
+delete_after_upload = 否
+max_upload_threads = 3
+retry_times = 3
+chunk_size = 8388608
 """
 
     with open(os.path.join(config_dir, "config.ini"), 'w', encoding='utf-8') as f:
@@ -549,14 +561,14 @@ def create_usage_guide(release_dir):
 - 可以参考示例文件进行配置
 
 ### OSS配置（可选）
-- 复制 `oss_config.json.example` 为 `oss_config.json`
-- 配置您的阿里云OSS信息
+OSS配置现在统一在 `config/config.ini` 文件的 `[OSS配置]` 部分：
+- 配置您的阿里云OSS访问密钥和存储桶信息
+- 设置 `enable_upload = 是` 启用OSS上传功能
 
 ### 配置文件位置
 所有配置文件都在程序所在目录，**不是**打包在exe内部：
-- `config/config.ini` - 主配置文件
+- `config/config.ini` - 主配置文件（包含OSS配置）
 - `config/URL_config.ini` - URL配置文件
-- `oss_config.json` - OSS配置文件（可选）
 
 ## 支持的平台
 
@@ -642,8 +654,7 @@ def main():
                 print("   - DouyinLiveRecorder.exe (主程序)")
                 print("   - 启动录制.bat (启动脚本)")
                 print("   - 使用说明.txt (详细说明)")
-                print("   - config_example/ (配置文件示例)")
-                print("   - oss_config.json.example (OSS配置模板)")
+                print("   - config_example/ (配置文件示例，包含OSS配置)")
                 print("   - StopRecording.vbs (停止录制脚本)")
                 print("   - 其他文档文件")
 

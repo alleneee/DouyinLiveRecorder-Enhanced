@@ -90,23 +90,65 @@ class ConfigManager:
         print("  {file_type} - 文件类型（video/audio/m3u8）")
         print("  {timestamp} - Unix时间戳")
     
+    def update_oss_access_key_id(self, access_key_id: str):
+        """更新OSS访问密钥ID"""
+        if not self.config.has_section('OSS配置'):
+            self.config.add_section('OSS配置')
+        self.config.set('OSS配置', 'access_key_id', access_key_id)
+        print(f"OSS访问密钥ID已更新")
+
+    def update_oss_access_key_secret(self, access_key_secret: str):
+        """更新OSS访问密钥Secret"""
+        if not self.config.has_section('OSS配置'):
+            self.config.add_section('OSS配置')
+        self.config.set('OSS配置', 'access_key_secret', access_key_secret)
+        print(f"OSS访问密钥Secret已更新")
+
+    def update_oss_endpoint(self, endpoint: str):
+        """更新OSS服务端点"""
+        if not self.config.has_section('OSS配置'):
+            self.config.add_section('OSS配置')
+        self.config.set('OSS配置', 'endpoint', endpoint)
+        print(f"OSS服务端点已更新为: {endpoint}")
+
+    def update_oss_bucket_name(self, bucket_name: str):
+        """更新OSS存储桶名称"""
+        if not self.config.has_section('OSS配置'):
+            self.config.add_section('OSS配置')
+        self.config.set('OSS配置', 'bucket_name', bucket_name)
+        print(f"OSS存储桶名称已更新为: {bucket_name}")
+
+    def update_oss_path_template_new(self, path_template: str):
+        """更新OSS路径模板"""
+        if not self.config.has_section('OSS配置'):
+            self.config.add_section('OSS配置')
+        self.config.set('OSS配置', 'path_template', path_template)
+        print(f"OSS路径模板已更新为: {path_template}")
+
+    def update_oss_enable_upload(self, enable: bool):
+        """更新是否启用OSS上传"""
+        if not self.config.has_section('OSS配置'):
+            self.config.add_section('OSS配置')
+        self.config.set('OSS配置', 'enable_upload', '是' if enable else '否')
+        print(f"OSS上传功能已{'启用' if enable else '禁用'}")
+
     def toggle_feature(self, feature_name: str, enabled: bool):
         """开关功能"""
         if not self.config.has_section('后处理设置'):
             self.config.add_section('后处理设置')
-        
+
         feature_map = {
             'm3u8': '是否生成M3U8',
             'audio': '是否提取音频',
             'oss': '是否上传OSS',
             'delete_segments': '是否删除旧切片'
         }
-        
+
         if feature_name not in feature_map:
             print(f"错误: 未知功能 '{feature_name}'")
             print(f"支持的功能: {', '.join(feature_map.keys())}")
             return False
-        
+
         config_key = feature_map[feature_name]
         value = '是' if enabled else '否'
         self.config.set('后处理设置', config_key, value)

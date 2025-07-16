@@ -4,7 +4,7 @@
 import configparser
 import os
 from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 
 
 class ConfigReader:
@@ -13,7 +13,7 @@ class ConfigReader:
     用于读取和管理各种切分设置
     """
     
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: Optional[str] = None):
         """
         初始化配置读取器
         :param config_path: 配置文件路径，如果为None则使用默认路径
@@ -28,12 +28,18 @@ class ConfigReader:
     def load_config(self):
         """加载配置文件"""
         try:
-            self.config.read(self.config_path, encoding='utf-8')
+            # 先尝试使用utf-8-sig编码读取，这样可以自动处理BOM字符
+            self.config.read(self.config_path, encoding='utf-8-sig')
             print(f"成功加载配置文件: {self.config_path}")
         except Exception as e:
-            print(f"加载配置文件失败: {e}")
-            # 使用默认配置
-            self._load_default_config()
+            try:
+                # 如果失败，尝试普通utf-8编码
+                self.config.read(self.config_path, encoding='utf-8')
+                print(f"成功加载配置文件: {self.config_path}")
+            except Exception as e2:
+                print(f"加载配置文件失败: {e2}")
+                # 使用默认配置
+                self._load_default_config()
     
     def _load_default_config(self):
         """加载默认配置"""
@@ -53,6 +59,19 @@ class ConfigReader:
             },
             '录制设置': {
                 '视频分段时间(秒)': '3600'
+            },
+            'OSS配置': {
+                'access_key_id': '',
+                'access_key_secret': '',
+                'endpoint': 'oss-cn-hangzhou.aliyuncs.com',
+                'bucket_name': '',
+                'path_template': 'live-records/{date}/{room_id}-{streamer_name}/',
+                'enable_upload': '否',
+                'upload_immediately': '否',
+                'delete_after_upload': '否',
+                'max_upload_threads': '3',
+                'retry_times': '3',
+                'chunk_size': '8388608'
             }
         })
     
@@ -123,6 +142,77 @@ class ConfigReader:
         if self.is_delete_old_segments():
             flags.append('delete_segments')
         return flags
+
+    # OSS配置相关方法
+    def get_oss_access_key_id(self) -> str:
+        """获取OSS访问密钥ID"""
+        return self.config.get('OSS配置', 'access_key_id', fallback='')
+
+    def get_oss_access_key_secret(self) -> str:
+        """获取OSS访问密钥Secret"""
+        return self.config.get('OSS配置', 'access_key_secret', fallback='')
+
+    def get_oss_endpoint(self) -> str:
+        """获取OSS服务端点"""
+        return self.config.get('OSS配置', 'endpoint', fallback='oss-cn-hangzhou.aliyuncs.com')
+
+    def get_oss_bucket_name(self) -> str:
+        """获取OSS存储桶名称"""
+        return self.config.get('OSS配置', 'bucket_name', fallback='')
+
+    def get_oss_path_template(self) -> str:
+        """获取OSS路径模板"""
+        return self.config.get('OSS配置', 'path_template',
+                              fallback='live-records/{date}/{room_id}-{streamer_name}/')
+
+    def is_oss_upload_enabled(self) -> bool:
+        """是否启用OSS上传"""
+        return self.config.get('OSS配置', 'enable_upload', fallback='否') == '是'
+
+    def is_oss_upload_immediately(self) -> bool:
+        """是否立即上传"""
+        return self.config.get('OSS配置', 'upload_immediately', fallback='否') == '是'
+
+    def is_oss_delete_after_upload(self) -> bool:
+        """上传后是否删除本地文件"""
+        return self.config.get('OSS配置', 'delete_after_upload', fallback='否') == '是'
+
+    def get_oss_max_upload_threads(self) -> int:
+        """获取最大上传线程数"""
+        try:
+            return int(self.config.get('OSS配置', 'max_upload_threads', fallback='3'))
+        except:
+            return 3
+
+    def get_oss_retry_times(self) -> int:
+        """获取上传重试次数"""
+        try:
+            return int(self.config.get('OSS配置', 'retry_times', fallback='3'))
+        except:
+            return 3
+
+    def get_oss_chunk_size(self) -> int:
+        """获取分片上传大小"""
+        try:
+            return int(self.config.get('OSS配置', 'chunk_size', fallback='8388608'))
+        except:
+            return 8388608
+
+    def get_oss_config_dict(self) -> dict:
+        """获取完整的OSS配置字典"""
+        return {
+            'access_key_id': self.get_oss_access_key_id(),
+            'access_key_secret': self.get_oss_access_key_secret(),
+            'endpoint': self.get_oss_endpoint(),
+            'bucket_name': self.get_oss_bucket_name(),
+            'path_template': self.get_oss_path_template(),
+            'enable_upload': self.is_oss_upload_enabled(),
+            'upload_immediately': self.is_oss_upload_immediately(),
+            'delete_after_upload': self.is_oss_delete_after_upload(),
+            'max_upload_threads': self.get_oss_max_upload_threads(),
+            'retry_times': self.get_oss_retry_times(),
+            'chunk_size': self.get_oss_chunk_size()
+        }
     
     def get_audio_codec_params(self) -> dict:
         """获取音频编码参数"""
@@ -167,6 +257,16 @@ class ConfigReader:
         print(f"是否上传OSS: {self.is_upload_oss()}")
         print(f"OSS上传路径模板: {self.get_oss_upload_path_template()}")
         print(f"是否删除旧切片: {self.is_delete_old_segments()}")
+        print("-" * 60)
+        print("OSS配置:")
+        print(f"  启用OSS上传: {self.is_oss_upload_enabled()}")
+        print(f"  OSS端点: {self.get_oss_endpoint()}")
+        print(f"  存储桶: {self.get_oss_bucket_name()}")
+        print(f"  路径模板: {self.get_oss_path_template()}")
+        print(f"  立即上传: {self.is_oss_upload_immediately()}")
+        print(f"  上传后删除: {self.is_oss_delete_after_upload()}")
+        print(f"  最大线程数: {self.get_oss_max_upload_threads()}")
+        print(f"  重试次数: {self.get_oss_retry_times()}")
         print("=" * 60)
 
 
