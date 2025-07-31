@@ -42,8 +42,10 @@ if platform.system() == "Darwin":
     os.environ['PATH'] = os.pathsep.join(path_parts)
 from src import spider, stream
 from src.proxy import ProxyDetector
-from src.utils import logger, status_logger
+from src.utils import logger
+from src.logger import log_key_info, log_error, console_print, console_status, console_error, console_warning, catch_exceptions, log_info, log_warning
 from src import utils
+from config_reader import ConfigReader
 from msg_push import (
     dingtalk, xizhi, tg_bot, send_email, bark, ntfy
 )
@@ -139,11 +141,7 @@ def display_info() -> None:
             
             status_message = " | ".join(status_parts)
             
-            # 记录到日志文件
-            if status_log_to_file:
-                status_logger.info(status_message)
-            
-            # 根据配置决定是否在控制台显示
+            # 控制台显示实时状态（不记录到日志）
             if status_console_display:
                 if Path(sys.executable).name != 'pythonw.exe':
                     # 清除上一行状态信息
@@ -158,40 +156,44 @@ def display_info() -> None:
                 time.sleep(5)
                 if monitoring == 0:
                     message = "没有正在监测和录制的直播"
-                    if status_log_to_file:
-                        status_logger.info(message)
                     if status_console_display:
                         print(f"\n{message}")
                 else:
                     message = f"没有正在录制的直播 循环监测间隔时间：{delay_default}秒"
-                    if status_log_to_file:
-                        status_logger.info(message)
                     if status_console_display:
                         print(f"\n{message}")
             else:
                 now_time = datetime.datetime.now()
                 no_repeat_recording = list(set(recording))
-                
+
                 recording_info = []
                 recording_info.append("x" * 60)
                 recording_info.append(f"正在录制{len(no_repeat_recording)}个直播: ")
-                
+
                 for recording_live in no_repeat_recording:
                     rt, qa = recording_time_list[recording_live]
                     have_record_time = now_time - rt
                     recording_info.append(f"{recording_live}[{qa}] 正在录制中 {str(have_record_time).split('.')[0]}")
-                
+
                 recording_info.append("x" * 60)
-                
-                # 记录到日志文件
-                if status_log_to_file:
-                    for info in recording_info:
-                        status_logger.info(info)
-                
-                # 根据配置决定是否在控制台显示
+
+                # 控制台显示录制状态（不记录到日志）
                 if status_console_display:
                     for info in recording_info:
                         print(info)
+
+                # 不再重复记录录制状态到日志，这些信息在控制台已经显示
+                # 只有录制数量发生变化时才记录到日志
+                current_recording_count = len(no_repeat_recording)
+                if not hasattr(update_file, 'last_recording_count'):
+                    update_file.last_recording_count = 0
+
+                if current_recording_count != update_file.last_recording_count:
+                    if current_recording_count > 0:
+                        log_key_info(f"录制状态变化: 当前正在录制 {current_recording_count} 个直播间")
+                    else:
+                        log_key_info("所有录制已停止")
+                    update_file.last_recording_count = current_recording_count
                 
                 start_display_time = now_time
 
@@ -415,7 +417,7 @@ def push_message(record_name: str, live_url: str, content: str) -> None:
                 print(f'提示信息：已经将[{record_name}]直播状态消息推送至你的{platform},'
                       f' 成功{len(result["success"])}, 失败{len(result["error"])}')
             except Exception as e:
-                color_obj.print_colored(f"直播消息推送到{platform}失败: {e}", color_obj.RED)
+                log_error(f"直播消息推送到{platform}失败: {e}")
 
 
 def run_script(command: str) -> None:
@@ -424,12 +426,28 @@ def run_script(command: str) -> None:
             command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=get_startup_info(os_type)
         )
         stdout, stderr = process.communicate()
-        stdout_decoded = stdout.decode('utf-8')
-        stderr_decoded = stderr.decode('utf-8')
+
+        # 尝试多种编码方式解码输出
+        try:
+            stdout_decoded = stdout.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                stdout_decoded = stdout.decode('gbk')
+            except UnicodeDecodeError:
+                stdout_decoded = stdout.decode('utf-8', errors='ignore')
+
+        try:
+            stderr_decoded = stderr.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                stderr_decoded = stderr.decode('gbk')
+            except UnicodeDecodeError:
+                stderr_decoded = stderr.decode('utf-8', errors='ignore')
+
         if stdout_decoded.strip():
-            print(stdout_decoded)
+            console_print(stdout_decoded)
         if stderr_decoded.strip():
-            print(stderr_decoded)
+            log_error(stderr_decoded)
     except PermissionError as e:
         logger.error(e)
         logger.error('脚本无执行权限!, 若是Linux环境, 请先执行:chmod +x your_script.sh 授予脚本可执行权限')
@@ -499,6 +517,8 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
                 threading.Thread(target=converts_mp4, args=(save_file_path, delete_origin_file)).start()
 
         print(f"\n{record_name} {stop_time} 直播录制完成\n")
+        # 记录关键的录制完成信息到日志
+        log_key_info(f"录制完成: {record_name} - {stop_time}")
 
         if script_command:
             logger.debug("开始执行脚本命令!")
@@ -1050,7 +1070,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                         anchor_name = port_info.get("anchor_name", '')
 
                     if not port_info.get("anchor_name", ''):
-                        print(f'序号{count_variable} 网址内容获取失败,进行重试中...获取失败的地址是:{url_data}')
+                        console_warning(f'序号{count_variable} 网址内容获取失败,进行重试中...获取失败的地址是:{url_data}')
                         with max_request_lock:
                             error_count += 1
                             error_window.append(1)
@@ -1160,6 +1180,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                               "KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile "
                                               "Safari/537.36")
 
+
                                 rw_timeout = "15000000"
                                 analyzeduration = "20000000"
                                 probesize = "10000000"
@@ -1185,8 +1206,14 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                     "-thread_queue_size", "1024",
                                     "-analyzeduration", analyzeduration,
                                     "-probesize", probesize,
-                                    "-fflags", "+discardcorrupt",
-                                    "-re", "-i", real_url,
+                                    "-fflags", "+discardcorrupt"
+                                ]
+
+
+                                ffmpeg_command.extend(["-re"])
+
+                                ffmpeg_command.extend([
+                                    "-i", real_url,
                                     "-bufsize", bufsize,
                                     "-sn", "-dn",
                                     "-reconnect_delay_max", "60",
@@ -1194,7 +1221,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                     "-max_muxing_queue_size", max_muxing_queue_size,
                                     "-correct_ts_overflow", "1",
                                     "-avoid_negative_ts", "1"
-                                ]
+                                ])
 
                                 record_headers = {
                                     'PandaTV': 'origin:https://www.pandalive.co.kr',
@@ -1221,6 +1248,8 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                 start_record_time = datetime.datetime.now()
                                 recording_time_list[record_name] = [start_record_time, record_quality_zh]
                                 rec_info = f"\r{anchor_name} 准备开始录制视频: {full_path}"
+                                # 记录关键的录制开始信息到日志
+                                log_key_info(f"开始录制: {anchor_name} - 质量:{record_quality_zh} - 格式:{video_save_type}")
                                 if show_url:
                                     re_plat = ('WinkTV', 'PandaTV', 'ShowRoom', 'CHZZK', 'Youtube')
                                     if platform in re_plat:
@@ -1294,7 +1323,15 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                             error_window.append(1)
 
                                 if video_save_type == "FLV" or only_flv_record:
-                                    filename = anchor_name + f'_{title_in_name}' + now + '.flv'
+                                    # 提取房间号，优先匹配数字串（适用于抖音等），否则使用 url 最后一段
+                                    room_id = "unknown"
+                                    m = re.search(r'(\d{5,})', record_url)
+                                    if m:
+                                        room_id = m.group(1)
+                                    else:
+                                        room_id = urllib.parse.urlparse(record_url).path.rsplit('/', maxsplit=1)[-1] or "unknown"
+                                    
+                                    filename = f"{room_id}_{anchor_name}" + f'_{title_in_name}' + now + '.flv'
                                     save_file_path = f'{full_path}/{filename}'
                                     print(f'{rec_info}/{filename}')
 
@@ -1315,6 +1352,8 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                             recording.discard(record_name)
                                             print(
                                                 f"\n{anchor_name} {time.strftime('%Y-%m-%d %H:%M:%S')} 直播录制完成\n")
+                                            # 记录关键的录制完成信息到日志
+                                            log_key_info(f"录制完成: {anchor_name} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
                                         else:
                                             logger.debug("未找到FLV直播流，跳过录制")
                                     except Exception as e:
@@ -1339,7 +1378,15 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                         logger.error(f"转码失败: {e} ")
 
                                 elif video_save_type == "MKV":
-                                    filename = anchor_name + f'_{title_in_name}' + now + ".mkv"
+                                    # 提取房间号，优先匹配数字串（适用于抖音等），否则使用 url 最后一段
+                                    room_id = "unknown"
+                                    m = re.search(r'(\d{5,})', record_url)
+                                    if m:
+                                        room_id = m.group(1)
+                                    else:
+                                        room_id = urllib.parse.urlparse(record_url).path.rsplit('/', maxsplit=1)[-1] or "unknown"
+                                    
+                                    filename = f"{room_id}_{anchor_name}" + f'_{title_in_name}' + now + ".mkv"
                                     print(f'{rec_info}/{filename}')
                                     save_file_path = full_path + '/' + filename
 
@@ -1372,7 +1419,15 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                             error_window.append(1)
 
                                 elif video_save_type == "MP4":
-                                    filename = anchor_name + f'_{title_in_name}' + now + ".mp4"
+                                    # 提取房间号，优先匹配数字串（适用于抖音等），否则使用 url 最后一段
+                                    room_id = "unknown"
+                                    m = re.search(r'(\d{5,})', record_url)
+                                    if m:
+                                        room_id = m.group(1)
+                                    else:
+                                        room_id = urllib.parse.urlparse(record_url).path.rsplit('/', maxsplit=1)[-1] or "unknown"
+                                    
+                                    filename = f"{room_id}_{anchor_name}" + f'_{title_in_name}' + now + ".mp4"
                                     print(f'{rec_info}/{filename}')
                                     save_file_path = full_path + '/' + filename
 
@@ -1458,7 +1513,16 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
 
                                 else:
                                     # TS格式视频不分段
-                                    filename = anchor_name + f'_{title_in_name}' + now + ".ts"
+                                    # 提取房间号，优先匹配数字串（适用于抖音等），否则使用 url 最后一段
+                                    import re, urllib.parse
+                                    room_id = "unknown"
+                                    m = re.search(r'(\d{5,})', record_url)
+                                    if m:
+                                        room_id = m.group(1)
+                                    else:
+                                        room_id = urllib.parse.urlparse(record_url).path.rsplit('/', maxsplit=1)[-1] or "unknown"
+                                    
+                                    filename = f"{room_id}_{anchor_name}" + f'_{title_in_name}' + now + ".ts"
                                     print(f'{rec_info}/{filename}')
                                     save_file_path = full_path + '/' + filename
 
@@ -1507,7 +1571,8 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
 
                 if error_count > 20:
                     x = x + 60
-                    color_obj.print_colored("\r瞬时错误太多,延迟加60秒", color_obj.YELLOW)
+                    console_warning("瞬时错误太多,延迟加60秒")
+                    log_error("瞬时错误过多，系统延迟60秒")
 
                 # 这里是.如果录制结束后,循环时间会暂时变成30s后检测一遍. 这样一定程度上防止主播卡顿造成少录
                 # 当30秒过后检测一遍后. 会回归正常设置的循环秒数
@@ -1605,13 +1670,17 @@ def check_ffmpeg_existence() -> bool:
 print("-----------------------------------------------------")
 print("|                DouyinLiveRecorder                 |")
 print("-----------------------------------------------------")
-
 print(f"版本号: {version}")
 print("GitHub: https://github.com/ihmily/DouyinLiveRecorder")
 print(f'支持平台: {platforms}')
 print('.....................................................')
+
+# 记录关键启动信息到日志
+log_key_info(f"DouyinLiveRecorder v{version} 启动")
+log_key_info(f"支持平台: {platforms}")
+
 if not check_ffmpeg_existence():
-    logger.error("缺少ffmpeg无法进行录制，程序退出")
+    log_error("缺少ffmpeg无法进行录制，程序退出")
     sys.exit(1)
 os.makedirs(os.path.dirname(config_file), exist_ok=True)
 t3 = threading.Thread(target=backup_file_start, args=(), daemon=True)
@@ -1656,22 +1725,24 @@ if language and 'en' not in language.lower():
 try:
     if skip_proxy_check:
         global_proxy = True
+        log_key_info("跳过代理检测")
     else:
         print('系统代理检测中，请耐心等待...')
         response_g = urllib.request.urlopen("https://www.google.com/", timeout=15)
         global_proxy = True
-        print('\r全局/规则网络代理已开启√')
+        print('全局/规则网络代理已开启√')
+        log_key_info("全局/规则网络代理已开启")
         pd = ProxyDetector()
         if pd.is_proxy_enabled():
             proxy_info = pd.get_proxy_info()
             print("System Proxy: http://{}:{}".format(proxy_info.ip, proxy_info.port))
+            log_key_info(f"检测到系统代理: {proxy_info.ip}:{proxy_info.port}")
 except HTTPError as err:
-    print(f"HTTP error occurred: {err.code} - {err.reason}")
+    log_error(f"HTTP error occurred: {err.code} - {err.reason}")
 except URLError:
-    color_obj.print_colored("INFO：未检测到全局/规则网络代理，请检查代理配置（若无需录制海外直播请忽略此条提示）",
-                            color_obj.YELLOW)
+    console_warning("INFO：未检测到全局/规则网络代理，请检查代理配置（若无需录制海外直播请忽略此条提示）")
 except Exception as err:
-    print("An unexpected error occurred:", err)
+    log_error(f"An unexpected error occurred: {err}")
 
 while True:
 
@@ -1689,6 +1760,14 @@ while True:
             input_url = input('请输入要录制的主播直播间网址（尽量使用PC网页端的直播间地址）:\n')
             with open(url_config_file, 'w', encoding=text_encoding) as file:
                 file.write(input_url)
+            log_key_info(f"添加新的录制URL: {input_url}")
+        else:
+            # 只在首次启动时记录到日志，后续循环只在控制台显示
+            url_count = len([url for url in ini_URL_content.split('\n') if url.strip()])
+            if first_run:
+                log_key_info(f"加载配置完成，共 {url_count} 个录制URL")
+            # 每次循环在控制台显示当前配置状态（不记录到日志）
+            # console_print(f"当前配置: {url_count} 个录制URL")
     except OSError as err:
         logger.error(f"发生 I/O 错误: {err}")
 

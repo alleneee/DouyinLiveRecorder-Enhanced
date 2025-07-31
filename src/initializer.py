@@ -23,7 +23,7 @@ execute_dir = os.path.split(os.path.realpath(sys.argv[0]))[0]
 current_env_path = os.environ.get('PATH')
 
 
-def unzip_file(zip_path: str | Path, extract_to: str | Path, delete: bool = True) -> None:
+def unzip_file(zip_path, extract_to, delete: bool = True) -> None:
     if not os.path.exists(extract_to):
         os.makedirs(extract_to)
 

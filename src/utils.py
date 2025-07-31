@@ -12,7 +12,7 @@ import traceback
 from typing import Any
 from collections import OrderedDict
 import execjs
-from .logger import logger, status_logger
+from .logger import logger, log_error, console_warning, console_print
 import configparser
 
 OptionalStr = str | None
@@ -31,7 +31,12 @@ class Color:
 
     @staticmethod
     def print_colored(text, color):
-        print(f"{color}{text}{Color.RESET}")
+        # 保持彩色输出功能，只有错误才记录到日志
+        colored_text = f"{color}{text}{Color.RESET}"
+        print(colored_text)
+        # 只有错误信息才记录到日志文件
+        if color == Color.RED:
+            log_error(text)
 
 
 def trace_error_decorator(func: callable) -> callable:
@@ -67,16 +72,16 @@ def read_config_value(file_path: str | Path, section: str, key: str) -> str | No
     try:
         config.read(file_path, encoding='utf-8-sig')
     except Exception as e:
-        print(f"Error occurred while reading the configuration file: {e}")
+        log_error(f"Error occurred while reading the configuration file: {e}")
         return None
 
     if section in config:
         if key in config[section]:
             return config[section][key]
         else:
-            print(f"Key [{key}] does not exist in section [{section}].")
+            console_warning(f"Key [{key}] does not exist in section [{section}].")
     else:
-        print(f"Section [{section}] does not exist in the file.")
+        console_warning(f"Section [{section}] does not exist in the file.")
 
     return None
 
@@ -87,11 +92,11 @@ def update_config(file_path: str | Path, section: str, key: str, new_value: str)
     try:
         config.read(file_path, encoding='utf-8-sig')
     except Exception as e:
-        print(f"An error occurred while reading the configuration file: {e}")
+        log_error(f"An error occurred while reading the configuration file: {e}")
         return
 
     if section not in config:
-        print(f"Section [{section}] does not exist in the file.")
+        console_warning(f"Section [{section}] does not exist in the file.")
         return
 
     # 转义%字符
@@ -101,9 +106,9 @@ def update_config(file_path: str | Path, section: str, key: str, new_value: str)
     try:
         with open(file_path, 'w', encoding='utf-8-sig') as configfile:
             config.write(configfile)
-        print(f"The value of {key} under [{section}] in the configuration file has been updated.")
+        console_print(f"The value of {key} under [{section}] in the configuration file has been updated.")
     except Exception as e:
-        print(f"Error occurred while writing to the configuration file: {e}")
+        log_error(f"Error occurred while writing to the configuration file: {e}")
 
 
 def get_file_paths(directory: str) -> list:
@@ -152,9 +157,10 @@ def check_disk_capacity(file_path: str | Path, show: bool = False) -> float:
     disk_root = Path(directory).anchor
     free_space_gb = disk_usage.free / (1024 ** 3)
     if show:
-        print(f"{disk_root} Total: {disk_usage.total / (1024 ** 3):.2f} GB "
-              f"Used: {disk_usage.used / (1024 ** 3):.2f} GB "
-              f"Free: {free_space_gb:.2f} GB\n")
+        disk_info = f"{disk_root} Total: {disk_usage.total / (1024 ** 3):.2f} GB " \
+                   f"Used: {disk_usage.used / (1024 ** 3):.2f} GB " \
+                   f"Free: {free_space_gb:.2f} GB"
+        console_print(disk_info)
     return free_space_gb
 
 

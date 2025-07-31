@@ -28,7 +28,6 @@ class ConfigReader:
     def load_config(self):
         """加载配置文件"""
         try:
-            # 先尝试使用utf-8-sig编码读取，这样可以自动处理BOM字符
             self.config.read(self.config_path, encoding='utf-8-sig')
             print(f"成功加载配置文件: {self.config_path}")
         except Exception as e:
@@ -46,10 +45,10 @@ class ConfigReader:
         print("使用默认配置")
         self.config.read_dict({
             '后处理设置': {
-                'M3U8切片时间(秒)': '300',
+                'M3U8切片时间(秒)': '6',
                 'M3U8切片数量限制': '0',
                 '是否删除旧切片': '否',
-                '音频切分时间(秒)': '300',
+                '音频切分时间(秒)': '18000',
                 '音频输出格式': 'mp3',
                 '音频比特率': '192k',
                 '音频采样率': '44100',
@@ -60,6 +59,7 @@ class ConfigReader:
             '录制设置': {
                 '视频分段时间(秒)': '3600'
             },
+
             'OSS配置': {
                 'access_key_id': '',
                 'access_key_secret': '',
@@ -69,9 +69,12 @@ class ConfigReader:
                 'enable_upload': '否',
                 'upload_immediately': '否',
                 'delete_after_upload': '否',
-                'max_upload_threads': '3',
+                'max_upload_threads': '4',
                 'retry_times': '3',
-                'chunk_size': '8388608'
+                'chunk_size': '8388608',
+                'enable_concurrent_upload': '是',
+                'connection_timeout': '60',
+                'read_timeout': '300'
             }
         })
     
@@ -81,6 +84,8 @@ class ConfigReader:
             return int(self.config.get('录制设置', '视频分段时间(秒)', fallback='3600'))
         except:
             return 3600
+    
+
     
     def get_m3u8_segment_time(self) -> int:
         """获取M3U8切片时间（秒）"""
@@ -177,12 +182,16 @@ class ConfigReader:
         """上传后是否删除本地文件"""
         return self.config.get('OSS配置', 'delete_after_upload', fallback='否') == '是'
 
+    def is_delete_local_files_after_upload(self) -> bool:
+        """上传成功后是否删除本地文件"""
+        return self.config.get('后处理设置', '上传成功后删除本地文件', fallback='否') == '是'
+
     def get_oss_max_upload_threads(self) -> int:
         """获取最大上传线程数"""
         try:
-            return int(self.config.get('OSS配置', 'max_upload_threads', fallback='3'))
+            return int(self.config.get('OSS配置', 'max_upload_threads', fallback='4'))
         except:
-            return 3
+            return 4
 
     def get_oss_retry_times(self) -> int:
         """获取上传重试次数"""
@@ -198,6 +207,24 @@ class ConfigReader:
         except:
             return 8388608
 
+    def is_oss_concurrent_upload_enabled(self) -> bool:
+        """是否启用并发上传"""
+        return self.config.get('OSS配置', 'enable_concurrent_upload', fallback='是') == '是'
+
+    def get_oss_connection_timeout(self) -> int:
+        """获取连接超时时间"""
+        try:
+            return int(self.config.get('OSS配置', 'connection_timeout', fallback='60'))
+        except:
+            return 60
+
+    def get_oss_read_timeout(self) -> int:
+        """获取读取超时时间"""
+        try:
+            return int(self.config.get('OSS配置', 'read_timeout', fallback='300'))
+        except:
+            return 300
+
     def get_oss_config_dict(self) -> dict:
         """获取完整的OSS配置字典"""
         return {
@@ -211,7 +238,10 @@ class ConfigReader:
             'delete_after_upload': self.is_oss_delete_after_upload(),
             'max_upload_threads': self.get_oss_max_upload_threads(),
             'retry_times': self.get_oss_retry_times(),
-            'chunk_size': self.get_oss_chunk_size()
+            'chunk_size': self.get_oss_chunk_size(),
+            'enable_concurrent_upload': self.is_oss_concurrent_upload_enabled(),
+            'connection_timeout': self.get_oss_connection_timeout(),
+            'read_timeout': self.get_oss_read_timeout()
         }
     
     def get_audio_codec_params(self) -> dict:
@@ -246,6 +276,7 @@ class ConfigReader:
         print("当前配置摘要:")
         print("=" * 60)
         print(f"视频分段时间: {self.get_video_segment_time()}秒")
+
         print(f"M3U8切片时间: {self.get_m3u8_segment_time()}秒")
         print(f"M3U8切片数量限制: {self.get_m3u8_list_size()}")
         print(f"音频切分时间: {self.get_audio_segment_time()}秒")

@@ -121,49 +121,59 @@ class APIClient:
 
         for attempt in range(self.retry_count):
             try:
-                print(f"正在发送后处理结果通知... (尝试 {attempt + 1}/{self.retry_count})")
-                print(f"请求URL: {url}")
-                print(f"发送数据: {json.dumps(live_records, ensure_ascii=False, indent=2)}")
+                if attempt == 0:  # 只在第一次尝试时打印详细信息
+                    print(f"正在发送后处理结果通知...")
+                    print(f"请求URL: {url}")
+                else:
+                    print(f"正在重试发送通知... (尝试 {attempt + 1}/{self.retry_count})")
 
                 response = requests.post(url, json=live_records, headers=headers, timeout=self.timeout)
-                response.raise_for_status()
 
+                response.raise_for_status()
                 result = response.json()
+                
+                # 提取并记录traceid
+                trace_id = result.get('traceId', '未知')
+                logger.info(f"API响应接收 - 状态码: {response.status_code}, traceId: {trace_id}")
+                print(f"响应状态码: {response.status_code}, traceId: {trace_id}")
+
                 if result.get('code') == 0:  # 根据接口文档，成功时code为0
-                    # 关键日志：后处理结果通知成功
-                    logger.info("后处理结果通知发送成功")
-                    logger.info(f"响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
-                    print("后处理结果通知发送成功")
-                    print(f"响应: {json.dumps(result, ensure_ascii=False, indent=2)}")
+                    logger.info(f"后处理结果通知发送成功 - {result.get('msg', '成功')}")
+                    print(f"API通知成功: {result.get('msg', '成功')}")
                     return True
                 else:
-                    # 关键日志：后处理结果通知失败
-                    logger.info(f"后处理结果通知发送失败: {result.get('msg', '未知错误')}")
-                    print(f"后处理结果通知发送失败: {result.get('msg', '未知错误')}")
+                    error_msg = result.get('msg', '未知错误')
+                    error_code = result.get('code', 'unknown')
+                    logger.info(f"后处理结果通知发送失败: {error_msg} (错误码: {error_code})")
+                    print(f"API通知失败: {error_msg} (错误码: {error_code})")
                     return False
 
             except requests.exceptions.RequestException as e:
-                print(f"发送结果通知时网络错误 (尝试 {attempt + 1}): {e}")
+                logger.error(f"网络错误 (尝试 {attempt + 1}): {e}")
+                print(f"网络错误: {e}")
                 if attempt < self.retry_count - 1:
                     time.sleep(self.retry_delay)
                     continue
             except json.JSONDecodeError as e:
-                print(f"解析结果通知响应失败: {e}")
+                logger.error(f"响应解析失败: {e}")
+                print(f"响应解析失败: {e}")
                 return False
             except Exception as e:
-                print(f"发送结果通知时发生未知错误: {e}")
+                logger.error(f"未知错误: {e}")
+                print(f"未知错误: {e}")
                 return False
 
-        # 关键日志：后处理结果通知最终失败
-        logger.info("发送后处理结果通知失败，已达到最大重试次数")
-        print("发送后处理结果通知失败，已达到最大重试次数")
+        logger.error("API通知最终失败，已达到最大重试次数")
+        print("API通知最终失败")
         return False
 
 
 def create_live_record_data(record_name: str, room_id: str, record_start_time: str,
                            record_date: str, record_file_name: str,
-                           m3u8_url: Optional[str] = None, ts_url: Optional[str] = None,
-                           mp3_urls: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                           m3u8_url: Optional[str] = None, video_url: Optional[str] = None,
+                           mp3_urls: Optional[List[Dict[str, Any]]] = None,
+                           cover_image_url: Optional[str] = None,
+                           biz_type: str = "live") -> Dict[str, Any]:
     """
     创建直播录制数据
     :param record_name: 录制名称
@@ -172,26 +182,38 @@ def create_live_record_data(record_name: str, room_id: str, record_start_time: s
     :param record_date: 录制日期
     :param record_file_name: 录制文件名称
     :param m3u8_url: M3U8文件URL
-    :param ts_url: TS文件URL
+    :param video_url: 视频文件URL (更新字段名为videoUrl)
     :param mp3_urls: MP3文件URL列表
+    :param cover_image_url: 封面图片URL (新增字段)
+    :param biz_type: 业务类型 (新增字段: "live"=直播, "shortVideo"=短视频)
     :return: 直播录制数据字典
     """
+
     live_record: Dict[str, Any] = {
         'authorAwemeId': room_id,
         'recordDate': record_date,
         'recordFileName': record_file_name,
-        'recordBeginTime': record_start_time
+        'recordBeginTime': record_start_time,
+        'bizType': biz_type  # 新增：业务类型
     }
 
     # 添加可选字段
     if m3u8_url:
         live_record['m3u8Url'] = m3u8_url
 
-    if ts_url:
-        live_record['tsUrl'] = ts_url
+    if video_url:
+        # 更新：字段名从 tsUrl 改为 videoUrl
+        live_record['videoUrl'] = video_url
 
+    if cover_image_url:
+        # 新增：封面图片URL
+        live_record['coverImageUrl'] = cover_image_url
+
+    # 始终包含 liveRecordMp3ReceiveInfo 字段，即使为空
     if mp3_urls:
         live_record['liveRecordMp3ReceiveInfo'] = mp3_urls
+    else:
+        live_record['liveRecordMp3ReceiveInfo'] = []
 
     return live_record
 
