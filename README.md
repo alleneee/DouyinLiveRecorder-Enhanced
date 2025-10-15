@@ -163,7 +163,7 @@
 - 如果要长时间挂着软件循环监测直播，最好循环时间设置长一点（咱也不差没录制到的那几分钟），避免因请求频繁导致被官方封禁IP 。
 
 - 要停止直播录制，Windows平台可执行StopRecording.vbs脚本文件，或者在录制界面使用 `Ctrl+C ` 组合键中断录制，若要停止其中某个直播间的录制，可在`URL_config.ini`文件中的地址前加#，会自动停止对应直播间的录制并正常保存已录制的视频。
-- FastAPI API 现为默认入口，`python main.py` CLI 模式已下线，如需命令行控制可基于 `app/recording/legacy_adapter.py` 自行封装。
+- FastAPI API 现为默认入口，`python main.py` CLI 模式已下线，如需命令行控制可基于 `app/runtime.py` 与 `app/runtime/worker_factory.py` 自行封装。
 - 最后，欢迎右上角给本项目一个star，同时也非常乐意大家提交pr。
 
 &emsp;

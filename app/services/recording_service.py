@@ -1,105 +1,80 @@
-"""录制服务层实现。"""
+"""录制服务层实现（简化版）。"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from loguru import logger
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import RecordingORM
-from app.schemas.recordings import RecordingRead
+from app.models.room import RoomORM
 
 
 class RecordingService:
+    """录制服务 """
+    
     def __init__(self, session: Session):
         self._session = session
-
-    def list_by_room(self, room_id: int, *, limit: int | None = None) -> list[RecordingRead]:
-        stmt = (
-            select(RecordingORM)
-            .where(RecordingORM.room_id == room_id)
-            .order_by(RecordingORM.started_at.desc().nullslast())
-        )
-        if limit:
-            stmt = stmt.limit(limit)
-        rows = self._session.execute(stmt).scalars().all()
-        return [RecordingRead.model_validate(row) for row in rows]
-
-    def get_active_entry(self, room_id: int) -> RecordingRead | None:
-        stmt = select(RecordingORM).where(
-            and_(RecordingORM.room_id == room_id, RecordingORM.status == "recording")
-        )
-        row = self._session.execute(stmt).scalars().first()
-        return RecordingRead.model_validate(row) if row else None
-
-    def mark_started(self, room_id: int, *, file_path: str | None = None) -> RecordingRead:
-        logger.info("标记房间 {} 开始录制", room_id)
-        now = datetime.now(timezone.utc)
-        record = RecordingORM(
-            room_id=room_id,
-            status="recording",
-            file_path=file_path,
-            started_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-        self._session.add(record)
-        logger.debug("添加录制记录到数据库: ID={}", record.id)
-        self._session.flush()
-        self._session.refresh(record)
-        logger.debug("刷新录制记录: ID={}", record.id)
-        logger.debug("录制记录已创建: ID={}", record.id)
-        return RecordingRead.model_validate(record)
-
-    def mark_stopped(
-        self,
-        recording_id: int,
-        *,
-        file_path: str | None = None,
-        error_message: str | None = None,
-    ) -> RecordingRead:
-        record = self._session.get(RecordingORM, recording_id)
-        if not record:
-            logger.error("录制记录不存在: ID={}", recording_id)
-            raise ValueError("Recording entry not found")
+    
+    def start_recording(self, room_id: int, file_path: str | None = None) -> RoomORM:
+        """启动录制"""
+        room = self._session.get(RoomORM, room_id)
+        if not room:
+            raise ValueError(f"Room {room_id} not found")
         
-        status = "completed" if error_message is None else "failed"
-        logger.info("标记录制 {} 状态: {}", recording_id, status)
+        if room.recording_status == "recording":
+            logger.warning(f"房间 {room_id} 已在录制中")
+            return room
+        
+        room.recording_status = "recording"
+        room.recording_started_at = datetime.now(timezone.utc)
+        room.last_error = None  # 清除之前的错误
+        
+        self._session.commit()
+        logger.info(f"✅ 录制已启动: room_id={room_id}, url={room.url}")
+        return room
+    
+    def stop_recording(self, room_id: int, *, error_message: str | None = None) -> RoomORM:
+        """停止录制"""
+        room = self._session.get(RoomORM, room_id)
+        if not room:
+            raise ValueError(f"Room {room_id} not found")
+        
         if error_message:
-            logger.error("录制失败: {}", error_message)
+            room.recording_status = "error"
+            room.last_error = error_message
+            room.error_count += 1
+            logger.error(f"❌ 录制错误: room_id={room_id}, error={error_message}")
+        else:
+            room.recording_status = "idle"
+            room.last_recording_at = datetime.now(timezone.utc)
+            logger.info(f"✅ 录制已停止: room_id={room_id}")
         
-        record.status = status
-        record.file_path = file_path or record.file_path
-        record.error_message = error_message
-        record.stopped_at = datetime.now(timezone.utc)
-        record.updated_at = record.stopped_at
-        logger.debug("更新录制记录: ID={}", record.id)
-        self._session.flush()
-        self._session.refresh(record)
-        logger.debug("刷新录制记录: ID={}", record.id)
-        return RecordingRead.model_validate(record)
-
-    def mark_failed(self, room_id: int, *, error_message: str) -> RecordingRead:
-        logger.error("房间 {} 录制失败: {}", room_id, error_message)
-        now = datetime.now(timezone.utc)
-        record = RecordingORM(
-            room_id=room_id,
-            status="failed",
-            error_message=error_message,
-            started_at=now,
-            stopped_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-        self._session.add(record)
-        logger.debug("添加失败记录到数据库: ID={}", record.id)
-        self._session.flush()
-        self._session.refresh(record)
-        logger.debug("刷新失败记录: ID={}", record.id)
-        logger.debug("失败记录已创建: ID={}", record.id)
-        return RecordingRead.model_validate(record)
+        room.recording_started_at = None
+        
+        self._session.commit()
+        return room
+    
+    def is_recording(self, room_id: int) -> bool:
+        """检查是否正在录制"""
+        room = self._session.get(RoomORM, room_id)
+        return room.recording_status == "recording" if room else False
+    
+    def get_recording_rooms(self) -> list[RoomORM]:
+        """获取所有正在录制的房间"""
+        stmt = select(RoomORM).where(RoomORM.recording_status == "recording")
+        return list(self._session.execute(stmt).scalars().all())
+    
+    def increment_segment(self, room_id: int, segment_size: int) -> None:
+        """增加分段统计"""
+        room = self._session.get(RoomORM, room_id)
+        if room:
+            room.total_segments += 1
+            room.total_size_bytes += segment_size
+            self._session.commit()
+            logger.debug(f"📊 更新统计: room_id={room_id}, segments={room.total_segments}, size={room.total_size_bytes}")
 
 
 __all__ = ["RecordingService"]

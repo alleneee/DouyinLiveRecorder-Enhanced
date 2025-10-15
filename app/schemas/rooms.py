@@ -20,7 +20,6 @@ class RoomCreate(RoomBase):
     enable_segment_recording: bool = Field(True, description="启用分段录制")
     segment_duration: int = Field(60, description="分段时长（秒）")
     video_save_type: str = Field("TS", description="视频格式")
-    oss_enabled: bool | None = Field(None, description="是否启用OSS")
     run_post_process: bool = Field(True, description="是否执行后处理")
 
 
@@ -34,11 +33,10 @@ class RoomUpdate(BaseModel):
 
 class RoomRead(RoomBase):
     id: int
-    enable_segment_recording: bool
-    segment_duration: int
-    video_save_type: str
-    oss_enabled: bool | None
-    run_post_process: bool
+    enable_segment_recording: bool = True
+    segment_duration: int = 1200
+    video_save_type: str = "TS"
+    run_post_process: bool = True
     created_at: datetime
     updated_at: datetime
 

@@ -162,11 +162,16 @@ class RecordingSupervisor:
             return [handle.room for handle in self._workers.values()]
 
 
-def legacy_worker_factory(task: Callable[[Room, threading.Event], None]) -> WorkerFactory:
-    """用于将旧版逻辑适配成工作线程工厂的辅助方法。"""
+def thread_worker_factory(task: Callable[[Room, threading.Event], None]) -> WorkerFactory:
+    """将可调用对象封装为线程工作器工厂。"""
 
     def factory(room: Room, stop_event: threading.Event) -> threading.Thread:
         thread = threading.Thread(target=task, args=(room, stop_event), name=f"Recorder-{room.identity}")
+        thread.daemon = True
         return thread
 
     return factory
+
+
+# 向后兼容
+legacy_worker_factory = thread_worker_factory

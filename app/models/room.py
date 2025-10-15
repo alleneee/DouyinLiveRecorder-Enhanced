@@ -23,22 +23,30 @@ class RoomORM(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     
-    # 录制配置（从迁移中添加的字段）
+    # 录制配置
     enable_segment_recording: Mapped[bool] = mapped_column(Integer, nullable=False, server_default="1")
     segment_duration: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1200")
     video_save_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="TS")
-    oss_enabled: Mapped[bool | None] = mapped_column(Integer, nullable=True)
     run_post_process: Mapped[bool] = mapped_column(Integer, nullable=False, server_default="1")
+    
+    # 当前录制状态
+    recording_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="idle")
+    recording_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # 统计信息
+    total_segments: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    total_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_recording_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # 错误信息
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
-    )
-
-    recordings: Mapped[list["RecordingORM"]] = relationship(
-        back_populates="room", cascade="all, delete-orphan"
     )
 
 

@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 import threading
 
-from src.recording.legacy_adapter import LegacyRoomAdapter
-from src.recording.repository import RoomRepository
-from src.recording.registry import RoomRegistry
-from src.recording.service import RoomService
-from src.recording.supervisor import RecordingSupervisor, legacy_worker_factory
+from app.core.recording.legacy_adapter import LegacyRoomAdapter
+from app.core.recording.repository import RoomRepository
+from app.core.recording.registry import RoomRegistry
+from app.core.recording.service import RoomService
+from app.core.recording.supervisor import RecordingSupervisor, thread_worker_factory
 
 
 def write_config(path: Path, content: str) -> None:
@@ -135,7 +135,7 @@ class RecordingComponentsTestCase(unittest.TestCase):
             stop_event.wait(0.1)
             stopped_event.set()
 
-        supervisor = RecordingSupervisor(registry, legacy_worker_factory(worker))
+        supervisor = RecordingSupervisor(registry, thread_worker_factory(worker))
         supervisor.start()
 
         self.assertTrue(started_event.wait(1.0), "worker should start after supervisor begins")
