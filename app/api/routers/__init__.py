@@ -1,5 +1,5 @@
-"""具体路由模块注册。"""
+"""API 路由模块。"""
 
-from . import rooms, recordings
+from . import rooms, recording_v2
 
-__all__ = ["rooms", "recordings"]
+__all__ = ["rooms", "recording_v2"]

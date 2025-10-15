@@ -1,25 +1,34 @@
-# AGENTS 指南
+# Repository Guidelines
 
-## 工作流程
+## Project Structure & Module Organization
+- **`app/`**: FastAPI service, modern recording runtime, and core domain modules. Key subpackages include `core/recording` for supervisors/workers, `services/` for DB-facing logic, and `runtime.py` for bootstrap.
+- **`app/legacy/`**: Compatibility layer reusing the classic spider/stream stack. Only touch when extending legacy platform support.
+- **`config/` & `backup_config/`**: Runtime INI sources. `URL_config.ini` remains the default room registry; keep backups in sync.
+- **`downloads/` & `logs/`**: Output artifacts; never commit generated media or log files.
+- **`tests/` & `tests/verify_*.py`**: Pytest suites plus higher-level flow checks (OSS, FFmpeg). Mirror new features here.
+- **`openspec/`**: Architecture specs that govern contributor expectations—review before structural work.
 
-1. 熟悉 `openspec` 目录中的规范文件。
-2. 面对复杂任务时使用 `update_plan` 制定精简步骤。
-3. 修改代码统一使用 `apply_patch`，并遵循最小改动原则。
-4. 完成后进行必要测试与格式化，确认结果无误。
+## Build, Test, and Development Commands
+- `uv venv && source .venv/bin/activate`: create/activate the project virtualenv (use `uv` for speed).
+- `uv pip install -r requirements.txt`: install Python dependencies; append `--system` only in constrained environments.
+- `uvicorn app.main:app --reload --port 8009`: launch the API for end-to-end testing.
+- `pytest -q`: run unit and integration tests; add `tests/verify_oss_flow.py` for manual OSS checks.
 
-## 编码约定
+## Coding Style & Naming Conventions
+- Follow PEP 8 with Black configuration (`line-length = 88`). Run `black`/`isort` if large edits are made.
+- Prefer descriptive snake_case for functions and variables; use UpperCamelCase for ORM models/Pydantic schemas.
+- Keep changes minimal: respect existing module boundaries and avoid renaming unless required by specs.
 
-- 保持与现有代码风格一致，避免无关改动。
-- 优先编写清晰、可维护的实现，及时更新相关文档。
-- 如需新增依赖或脚本，先评估影响并记录理由。
-- 判断可行时补充针对性测试，确保关键路径覆盖。
+## Testing Guidelines
+- Use Pytest; test modules mirror source layout (`tests/recording/test_*`).
+- Add regression tests when touching recording supervisors, workers, or repository persistence.
+- For OSS/FFmpeg paths, rely on existing integration scripts (`tests/verify_oss_flow.py`) and document manual prerequisites.
 
-## 沟通提示
+## Commit & Pull Request Guidelines
+- Write Conventional-style summaries (`fix:`, `feat:`, `docs:`) followed by a concise purpose, e.g., `feat: add douyin h265 stream handler`.
+- Each PR should reference related issues, describe configuration changes, and include test evidence (`pytest` output or manual logs).
+- Capture before/after behavior for recording workflows, especially when modifying `SegmentRecordingWorker` or OSS uploader settings.
 
-- 在运行命令或大规模编辑前，用简短中文说明下一步。
-- 工作过程适时同步进展，遇到阻碍及时发问。
-- 最终回复提供精炼总结，并指出可能的后续建议。
-
-## 环境管理
-
-- 使用uv管理虚拟环境
+## Security & Configuration Tips
+- Never commit real OSS keys or room cookies. Store secrets in `.env` and redact when sharing logs.
+- Update `config/*.ini` only through dedicated tasks; document rationale in PR descriptions to keep audit trails clear.

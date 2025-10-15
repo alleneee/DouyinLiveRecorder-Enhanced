@@ -7,16 +7,17 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from app.core.logging_config import setup_logging
 from app.recording.environment import RecordingEnvironment, load_environment
 from app.recording.legacy_adapter import LegacyRecorder
 from app.db.session import get_session
 from app.services.recording_service import RecordingService
 from app.services.room_service import RoomService
 from app.services.repository import DatabaseRoomRepository
-from src.recording.app import RecordingApplication, build_application
-from src.recording.context import RecordingContext, get_context
-from src.recording.models import Room, RoomStatus
-from src.recording.supervisor import legacy_worker_factory
+from app.core.recording.app import RecordingApplication, build_application
+from app.core.recording.context import RecordingContext, get_context
+from app.core.recording.models import Room, RoomStatus
+from app.core.recording.supervisor import legacy_worker_factory
 
 logger = logging.getLogger("app.runtime")
 
@@ -31,6 +32,15 @@ def bootstrap_runtime() -> RecordingContext:
     global _application
     global _legacy_recorder
     global _legacy_env
+    
+    # 初始化日志系统（首次调用）
+    setup_logging(
+        log_level="INFO",
+        enable_console=True,
+        enable_file=True,
+        debug_mode=False,  # 可从配置文件读取
+    )
+    
     if _application is not None:
         return get_context()
 
@@ -48,7 +58,7 @@ def bootstrap_runtime() -> RecordingContext:
     config_dir = Path(__file__).resolve().parents[2] / "config"
     _legacy_env = load_environment(config_dir)
     _legacy_recorder = LegacyRecorder(_legacy_env, context)
-    logger.info("Recording runtime bootstrapped")
+    logger.info("录制运行时已启动")
     return get_context()
 
 
@@ -69,7 +79,7 @@ def shutdown_runtime() -> None:
     _application = None
     _legacy_recorder = None
     _legacy_env = None
-    logger.info("Recording runtime shutdown complete")
+    logger.info("录制运行时已关闭")
 
 
 def _worker_entry(room: Room, stop_event: threading.Event) -> None:
@@ -78,7 +88,7 @@ def _worker_entry(room: Room, stop_event: threading.Event) -> None:
     worker_logger = logging.getLogger("app.runtime.worker")
     recorder = _legacy_recorder
     if recorder is None:
-        worker_logger.error("Legacy recorder is not initialized; skipping")
+        worker_logger.error("旧版录制器未初始化，跳过录制")
         return
     recording_id: int | None = None
     failure_reason: str | None = None
@@ -97,17 +107,17 @@ def _worker_entry(room: Room, stop_event: threading.Event) -> None:
                 context = ensure_runtime()
                 context.service.update_room(orm.url, status=RoomStatus.RECORDING.value)
 
-        worker_logger.info("Recording worker started for %s", room.identity)
+        worker_logger.info("房间 %s 的录制工作线程已启动", room.identity)
         recorder.record(room, stop_event=stop_event)
     except Exception as exc:  # noqa: BLE001
-        worker_logger.exception("Recording worker failed for %s", room.identity)
+        worker_logger.exception("房间 %s 的录制工作线程失败", room.identity)
         failure_reason = str(exc)
     finally:
         if recording_id is not None:
             with get_session() as session:
                 rec_service = RecordingService(session)
                 rec_service.mark_stopped(recording_id, error_message=failure_reason)
-        worker_logger.info("Recording worker stopped for %s", room.identity)
+        worker_logger.info("房间 %s 的录制工作线程已停止", room.identity)
 
 
 __all__ = ["bootstrap_runtime", "shutdown_runtime", "ensure_runtime"]

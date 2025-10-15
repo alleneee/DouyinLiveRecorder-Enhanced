@@ -6,13 +6,13 @@ import re
 from datetime import datetime, timezone
 from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import RoomORM
-from app.schemas.rooms import RoomCreate, RoomRead, RoomUpdate
-from src.recording.models import Room, RoomQuality, RoomStatus
+from app.schemas.rooms import RoomCreate, RoomList, RoomRead, RoomUpdate
+from app.core.recording.models import Room, RoomQuality, RoomStatus
 
 
 class RoomService:
@@ -24,9 +24,16 @@ class RoomService:
     # ----------------------------
     # 查询接口
     # ----------------------------
-    def list_rooms(self) -> list[RoomRead]:
-        rooms = self._session.scalars(select(RoomORM).order_by(RoomORM.created_at.desc())).all()
-        return [RoomRead.model_validate(room) for room in rooms]
+    def list_rooms(self, *, limit: int, offset: int) -> RoomList:
+        query = select(RoomORM).order_by(RoomORM.created_at.desc()).offset(offset).limit(limit)
+        rooms = self._session.scalars(query).all()
+        total = self._session.scalar(select(func.count()).select_from(RoomORM)) or 0
+        return RoomList(
+            items=[RoomRead.model_validate(room) for room in rooms],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
 
     def get_room(self, room_id: int) -> RoomRead:
         room = self._require_room(room_id)

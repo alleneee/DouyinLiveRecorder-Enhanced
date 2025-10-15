@@ -22,6 +22,14 @@ class RoomORM(Base):
     quality: Mapped[str] = mapped_column(String(32), nullable=False, default="原画")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 录制配置（从迁移中添加的字段）
+    enable_segment_recording: Mapped[bool] = mapped_column(Integer, nullable=False, server_default="1")
+    segment_duration: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1200")
+    video_save_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="TS")
+    oss_enabled: Mapped[bool | None] = mapped_column(Integer, nullable=True)
+    run_post_process: Mapped[bool] = mapped_column(Integer, nullable=False, server_default="1")
+    
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

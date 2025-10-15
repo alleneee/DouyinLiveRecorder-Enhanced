@@ -1,7 +1,7 @@
-- [ ] 建立 FastAPI 推荐目录结构并迁移公共配置/日志组件
-- [ ] 配置 SQLAlchemy Session、Pydantic settings 以及依赖管理
-- [ ] 定义房间与录制的 ORM 模型、Pydantic schema 与服务接口
-- [ ] 编写 FastAPI 路由：房间 CRUD、录制控制与状态查询
-- [ ] 初始化 Alembic（env、script.py.mako、版本目录）并生成首个迁移
-- [ ] 连接录制调度器与新服务层，验证接口调用流程
-- [ ] 更新文档与运行指引，运行核心测试/`pytest`
+- [x] 建立 FastAPI 推荐目录结构并迁移公共配置/日志组件
+- [x] 配置 SQLAlchemy Session、Pydantic settings 以及依赖管理
+- [x] 定义房间与录制的 ORM 模型、Pydantic schema 与服务接口
+- [x] 编写 FastAPI 路由：房间 CRUD、录制控制与状态查询
+- [x] 初始化 Alembic（env、script.py.mako、版本目录）并生成首个迁移
+- [x] 连接录制调度器与新服务层，验证接口调用流程
+- [x] 更新文档与运行指引，运行核心测试/`pytest`

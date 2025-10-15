@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models import RoomORM
-from src.recording.models import Room, RoomQuality, RoomStatus
-from src.recording.repository import RepositorySnapshot
+from app.core.recording.models import Room, RoomQuality, RoomStatus
+from app.core.recording.repository import RepositorySnapshot
 
 
 class DatabaseRoomRepository:

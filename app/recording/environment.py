@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src import utils
+from app.legacy import utils
 
 
 @dataclass(slots=True)

@@ -1,6 +1,8 @@
-"""ORM 模型导出。"""
+"""ORM 模型包。"""
 
-from .room import RoomORM
 from .recording import RecordingORM
+from .room import RoomORM
+from .video_segment import VideoSegmentORM
+from .recording_task import RecordingTaskORM
 
-__all__ = ["RoomORM", "RecordingORM"]
+__all__ = ["RecordingORM", "RoomORM", "VideoSegmentORM", "RecordingTaskORM"]

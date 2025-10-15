@@ -6,7 +6,7 @@ from fastapi import Depends
 
 from app.runtime import ensure_runtime
 from app.services.unit_of_work import UnitOfWork
-from src.recording.context import RecordingContext
+from app.core.recording.context import RecordingContext
 
 
 def get_uow() -> Generator[UnitOfWork, None, None]:

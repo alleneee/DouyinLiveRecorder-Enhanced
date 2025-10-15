@@ -1,8 +1,5 @@
-"""服务层导出。"""
+"""服务层模块。"""
 
-from .room_service import RoomService
-from .recording_service import RecordingService
-from .unit_of_work import UnitOfWork
-from .repository import DatabaseRoomRepository
+from .oss_service import get_oss_service, reset_oss_service
 
-__all__ = ["RoomService", "RecordingService", "UnitOfWork", "DatabaseRoomRepository"]
+__all__ = ["get_oss_service", "reset_oss_service"]

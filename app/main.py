@@ -25,12 +25,12 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _startup() -> None:
         bootstrap_runtime()
-        logging.getLogger(__name__).info("Application startup completed")
+        logging.getLogger(__name__).info("应用启动完成")
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         shutdown_runtime()
-        logging.getLogger(__name__).info("Application shutdown initiated")
+        logging.getLogger(__name__).info("应用关闭已启动")
 
     return app
 

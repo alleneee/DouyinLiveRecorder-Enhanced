@@ -32,4 +32,13 @@ def get_session() -> Session:
         session.close()
 
 
-__all__ = ["SessionLocal", "get_session", "engine"]
+def get_db():
+    """获取数据库会话（用于依赖注入）。"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+__all__ = ["SessionLocal", "get_session", "get_db", "engine"]

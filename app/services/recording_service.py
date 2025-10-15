@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -34,6 +35,7 @@ class RecordingService:
         return RecordingRead.model_validate(row) if row else None
 
     def mark_started(self, room_id: int, *, file_path: str | None = None) -> RecordingRead:
+        logger.info("标记房间 {} 开始录制", room_id)
         now = datetime.now(timezone.utc)
         record = RecordingORM(
             room_id=room_id,
@@ -44,8 +46,11 @@ class RecordingService:
             updated_at=now,
         )
         self._session.add(record)
+        logger.debug("添加录制记录到数据库: ID={}", record.id)
         self._session.flush()
         self._session.refresh(record)
+        logger.debug("刷新录制记录: ID={}", record.id)
+        logger.debug("录制记录已创建: ID={}", record.id)
         return RecordingRead.model_validate(record)
 
     def mark_stopped(
@@ -57,17 +62,27 @@ class RecordingService:
     ) -> RecordingRead:
         record = self._session.get(RecordingORM, recording_id)
         if not record:
+            logger.error("录制记录不存在: ID={}", recording_id)
             raise ValueError("Recording entry not found")
-        record.status = "completed" if error_message is None else "failed"
+        
+        status = "completed" if error_message is None else "failed"
+        logger.info("标记录制 {} 状态: {}", recording_id, status)
+        if error_message:
+            logger.error("录制失败: {}", error_message)
+        
+        record.status = status
         record.file_path = file_path or record.file_path
         record.error_message = error_message
         record.stopped_at = datetime.now(timezone.utc)
         record.updated_at = record.stopped_at
+        logger.debug("更新录制记录: ID={}", record.id)
         self._session.flush()
         self._session.refresh(record)
+        logger.debug("刷新录制记录: ID={}", record.id)
         return RecordingRead.model_validate(record)
 
     def mark_failed(self, room_id: int, *, error_message: str) -> RecordingRead:
+        logger.error("房间 {} 录制失败: {}", room_id, error_message)
         now = datetime.now(timezone.utc)
         record = RecordingORM(
             room_id=room_id,
@@ -79,8 +94,11 @@ class RecordingService:
             updated_at=now,
         )
         self._session.add(record)
+        logger.debug("添加失败记录到数据库: ID={}", record.id)
         self._session.flush()
         self._session.refresh(record)
+        logger.debug("刷新失败记录: ID={}", record.id)
+        logger.debug("失败记录已创建: ID={}", record.id)
         return RecordingRead.model_validate(record)
 
 
