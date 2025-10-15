@@ -91,10 +91,61 @@
     ├── docker-compose.yaml -> (Container Orchestration File)
     ├── Dockerfile -> (Application Build Recipe)
     ├── StopRecording.vbs -> (stop recording script on Windows)
+    ├── app/ -> (FastAPI + SQLAlchemy 服务端)
+        ├── main.py -> (FastAPI 入口)
+        ├── core/ -> (配置与环境变量)
+        ├── api/ -> (房间与录制 API 路由)
+        ├── db/ -> (会话工厂与 Base 定义)
+        ├── models/ -> (SQLAlchemy ORM 模型)
+        ├── schemas/ -> (Pydantic 数据模型)
+        ├── services/ -> (数据库服务与仓库适配)
+        ├── runtime.py -> (录制运行时生命周期管理)
+    ├── alembic/ -> (数据库迁移脚本)
+    ├── alembic.ini -> (Alembic 配置)
     ...
 ```
 
 </div>
+
+## 🚀 FastAPI 后端快速上手
+
+1. **安装依赖**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **配置数据库连接**（默认使用 MySQL 5.7）：
+
+   ```bash
+   export APP_DATABASE_URL="mysql+pymysql://user:password@localhost:3306/douyin"
+   ```
+
+3. **初始化数据库结构**
+
+   ```bash
+   alembic upgrade head
+   ```
+
+4. **启动 FastAPI 服务**
+
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+
+   服务默认挂载在 `http://127.0.0.1:8000/api`，当前开放接口：
+
+   - `GET /rooms`：房间列表
+   - `POST /rooms`：创建房间（持久化至数据库，并同步录制调度）
+   - `PATCH /rooms/{id}` / `POST /rooms/{id}/enable|disable`：更新房间状态
+   - `DELETE /rooms/{id}`：移除房间
+   - `GET /recordings/{room_id}`：查询录制历史
+   - `POST /recordings/{room_id}/start`：启动录制，可选 `force=true` 强制重启正在录制的房间
+   - `POST /recordings/{room_id}/stop`：停止录制，可附加 `reason`
+
+5. **运行录制服务**
+
+   FastAPI 在启动时会自动初始化 `RecordingSupervisor`，并使用数据库仓库替换原有的 `URL_config.ini` 文件后端。通过 API 修改房间信息后，调度器会自动同步最新配置。
 
 ## 🌱使用说明
 
@@ -112,6 +163,7 @@
 - 如果要长时间挂着软件循环监测直播，最好循环时间设置长一点（咱也不差没录制到的那几分钟），避免因请求频繁导致被官方封禁IP 。
 
 - 要停止直播录制，Windows平台可执行StopRecording.vbs脚本文件，或者在录制界面使用 `Ctrl+C ` 组合键中断录制，若要停止其中某个直播间的录制，可在`URL_config.ini`文件中的地址前加#，会自动停止对应直播间的录制并正常保存已录制的视频。
+- FastAPI API 现为默认入口，`python main.py` CLI 模式已下线，如需命令行控制可基于 `app/recording/legacy_adapter.py` 自行封装。
 - 最后，欢迎右上角给本项目一个star，同时也非常乐意大家提交pr。
 
 &emsp;
