@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     folder_by_title: bool = Field(default=False, description="保存文件夹是否以标题区分")
     filename_include_title: bool = Field(default=False, description="保存文件名是否包含标题")
     clean_emoji: bool = Field(default=True, description="是否去除名称中的表情符号")
-    video_save_type: str = Field(default="ts", description="视频保存格式: ts/mkv/flv/mp4/mp3/m4a")
+    video_save_type: str = Field(default="MP4", description="视频保存格式: ts/mkv/flv/mp4/mp3/m4a")
     video_quality: str = Field(default="OD", description="视频质量: OD原画/TD超清/HD高清/SD标清/LD流畅")
     use_proxy: bool = Field(default=False, description="是否使用代理")
     proxy_addr: str = Field(default="", description="代理地址")
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     file_log_enabled: bool = Field(default=True, description="状态信息记录到日志文件")
     
     # OSS 配置
-    oss_enabled: bool = Field(default=False, description="启用 OSS 上传")
+    oss_enabled: bool = Field(default=True, description="启用 OSS 上传")
     oss_access_key_id: str = Field(default="", description="阿里云 AccessKeyId")
     oss_access_key_secret: str = Field(default="", description="阿里云 AccessKeySecret")
     oss_endpoint: str = Field(default="", description="OSS 端点，如 oss-cn-hangzhou.aliyuncs.com")
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     oss_use_internal_endpoint: bool = Field(default=False, description="使用内网端点（阿里云 ECS 内部访问）")
     oss_url_expires: int = Field(default=31536000, description="签名 URL 有效期（秒），默认 1 年")
     oss_upload_immediately: bool = Field(default=False, description="是否立即上传")
-    oss_delete_after_upload: bool = Field(default=False, description="上传成功后删除本地文件")
+    oss_delete_after_upload: bool = Field(default=True, description="上传成功后删除本地文件")
     oss_max_upload_threads: int = Field(default=4, description="最大上传线程数")
     oss_retry_times: int = Field(default=3, description="上传重试次数")
     oss_chunk_size: int = Field(default=8388608, description="分片大小（字节），默认8MB")

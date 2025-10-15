@@ -17,7 +17,7 @@ from app.core.recording.segment_worker import SegmentRecordingWorker, SegmentCon
 from app.core.recording.continuous_worker import ContinuousRecordingWorker, ContinuousConfig
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.recording_task import RecordingTaskORM
+from app.models.room import RoomORM
 from app.legacy.utils import logger
 
 router = APIRouter(prefix="/recording", tags=["recording"])
@@ -101,27 +101,6 @@ async def start_recording_v2(
                 message="该直播间已在录制中",
             )
         
-        # 保存录制任务到数据库
-        db2 = next(get_db())
-        try:
-            task = RecordingTaskORM(
-                room_url=room_orm.url,
-                nickname=room_orm.nickname,
-                quality=room_orm.quality,
-                enable_segment_recording=room_orm.enable_segment_recording,
-                segment_duration=room_orm.segment_duration,
-                video_save_type=room_orm.video_save_type,
-                oss_enabled=room_orm.oss_enabled if room_orm.oss_enabled is not None else settings.oss_enabled,
-                status="pending",
-            )
-            db2.add(task)
-            db2.commit()
-            db2.refresh(task)
-            task_id = task.id
-            logger.info(f"录制任务已创建: task_id={task_id}, room_id={room_orm.id}, url={room_orm.url}")
-        finally:
-            db2.close()
-        
         # 创建平台处理器
         handler = LegacyPlatformHandler(
             cookies_map={},  # 可以从配置读取
@@ -139,19 +118,18 @@ async def start_recording_v2(
         
         # 根据房间配置选择录制模式
         if room_orm.enable_segment_recording:
-            # 分段录制模式（20分钟一段）
-            logger.info(f"使用分段录制模式: room_id={room_orm.id}, url={room_orm.url}")
+            # 分段录制模式（时长由配置决定）
+            logger.info(f"使用分段录制模式: room_id={room_orm.id}, url={room_orm.url}, segment_duration={room_orm.segment_duration}秒")
             
             # 使用房间配置
             segment_duration = room_orm.segment_duration
-            oss_enabled = room_orm.oss_enabled if room_orm.oss_enabled is not None else settings.oss_enabled
             
             config = SegmentConfig(
                 segment_duration=segment_duration,
                 video_save_path="downloads",
                 video_save_type=room_orm.video_save_type,
                 folder_by_author=True,
-                oss_enabled=oss_enabled,
+                oss_enabled=settings.oss_enabled,  # 使用全局配置
                 oss_access_key_id=settings.oss_access_key_id,
                 oss_access_key_secret=settings.oss_access_key_secret,
                 oss_endpoint=settings.oss_endpoint,
