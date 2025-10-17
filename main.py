@@ -1942,7 +1942,7 @@ while True:
         pattern = r"(https?://)?(www\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+(:\d+)?(/.*)?"
         return re.search(pattern, string) is not None
 
-
+    # TODO:读取url_config_file读取需要监听的url地址,使用数据库表进行存储读取
     try:
         url_comments, line_list, url_line_list = [[] for _ in range(3)]
         with (open(url_config_file, "r", encoding=text_encoding, errors='ignore') as file):

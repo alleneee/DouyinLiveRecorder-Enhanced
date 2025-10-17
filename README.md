@@ -120,6 +120,172 @@
 
 &emsp;
 
+## 🚀API管理系统（新功能）
+
+### 功能特性
+
+- ✅ **数据库管理**：直播间配置存储在MySQL数据库，告别配置文件
+- ✅ **持续监听**：直播间创建后自动启动监听线程，循环检测直播状态
+- ✅ **自动录制**：检测到开播自动录制，下播自动停止，继续监听下次开播
+- ✅ **分段切片**：按配置时长自动切片录制（默认60秒）
+- ✅ **OSS上传**：支持阿里云OSS自动上传，可选删除本地文件
+- ✅ **RESTful API**：提供完整的CRUD接口管理直播间、录制任务、视频文件
+- ✅ **实时状态**：实时查看监听状态、录制状态、视频文件信息
+
+### 快速开始
+
+#### 1. 环境准备
+
+```bash
+# 创建数据库（MySQL 5.7）
+mysql -u root -p < schema.sql
+
+# 配置环境变量
+cp .env.example .env
+vim .env  # 修改数据库和OSS配置
+```
+
+#### 2. 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 3. 初始化数据库
+
+```bash
+python init_db.py
+```
+
+#### 4. 启动API服务
+
+```bash
+python app/run.py
+```
+
+API服务将在 `http://localhost:8000` 启动
+
+查看API文档：`http://localhost:8000/docs`
+
+### API使用示例
+
+#### 创建直播间（自动启动监听）
+
+```bash
+curl -X POST "http://localhost:8000/api/live-rooms" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://live.douyin.com/745964462470",
+    "quality": "原画",
+    "streamer_name": "测试主播",
+    "is_enabled": true
+  }'
+```
+
+#### 批量创建直播间
+
+```bash
+curl -X POST "http://localhost:8000/api/live-rooms/batch" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"url": "https://live.douyin.com/745964462470", "streamer_name": "主播1"},
+    {"url": "https://live.bilibili.com/21593109", "streamer_name": "主播2"}
+  ]'
+```
+
+#### 查看直播间列表
+
+```bash
+curl "http://localhost:8000/api/live-rooms?page=1&page_size=20&platform=douyin"
+```
+
+#### 控制监听
+
+```bash
+# 启动监听
+curl -X POST "http://localhost:8000/api/live-rooms/1/start"
+
+# 停止监听
+curl -X POST "http://localhost:8000/api/live-rooms/1/stop"
+
+# 删除直播间（会停止监听和录制）
+curl -X DELETE "http://localhost:8000/api/live-rooms/1"
+```
+
+#### 查看录制任务
+
+```bash
+# 所有任务
+curl "http://localhost:8000/api/recording-tasks"
+
+# 某直播间的任务历史
+curl "http://localhost:8000/api/recording-tasks/room/1/tasks"
+```
+
+#### 查看视频文件
+
+```bash
+# 所有文件
+curl "http://localhost:8000/api/video-files"
+
+# 某任务的所有切片
+curl "http://localhost:8000/api/video-files/task/1/files"
+
+# 手动触发OSS上传
+curl -X POST "http://localhost:8000/api/video-files/1/upload"
+```
+
+### 核心工作流程
+
+```
+创建直播间(API) 
+    ↓
+落表(live_rooms) 
+    ↓
+启动监听线程(持续运行)
+    ↓
+循环检测直播状态(每30秒)
+    ├─ 检测到开播
+    │   ├─ 创建录制任务(recording_tasks)
+    │   ├─ 启动FFmpeg录制
+    │   ├─ 按时长切片(默认60秒)
+    │   ├─ 每个切片落表(video_files)
+    │   ├─ 自动上传阿里云OSS
+    │   └─ 回写OSS地址到数据库
+    │
+    └─ 检测到下播
+        ├─ 停止录制
+        ├─ 完成任务收尾
+        └─ 继续监听(等待下次开播)
+```
+
+**除非删除记录或禁用，监听永不停止！**
+
+### 阿里云OSS配置
+
+在 `.env` 文件中配置：
+
+```bash
+OSS_ENABLED=true
+OSS_PROVIDER=aliyun
+OSS_ACCESS_KEY=your_aliyun_access_key_id
+OSS_SECRET_KEY=your_aliyun_access_key_secret
+OSS_BUCKET=live-recordings
+OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
+OSS_AUTO_DELETE_LOCAL=false  # 上传后是否删除本地文件
+```
+
+### 数据库表结构
+
+- **live_rooms**: 直播间配置和状态
+- **recording_tasks**: 录制任务历史
+- **video_files**: 视频文件和OSS信息
+- **system_configs**: 系统配置
+
+详细表结构见 `schema.sql`
+
+&emsp;
+
 直播间链接示例：
 
 ```

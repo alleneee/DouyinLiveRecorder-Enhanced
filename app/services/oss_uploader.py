@@ -1,0 +1,495 @@
+"""阿里云OSS上传服务 - 支持分片上传和断点续传"""
+import os
+import hashlib
+from datetime import datetime
+from typing import Dict, Optional, Callable
+from loguru import logger
+from pathlib import Path
+
+try:
+    import oss2
+    from oss2.models import PartInfo
+except ImportError:
+    logger.error("请安装阿里云OSS SDK: pip install oss2")
+    oss2 = None
+
+from app.config import settings
+
+
+class AliyunOSSUploader:
+    """阿里云OSS上传器
+    
+    功能特性：
+    - 自动分片上传（大文件）
+    - 断点续传支持
+    - 上传进度回调
+    - 自动重试机制
+    - 内网endpoint优化
+    
+    Examples:
+        >>> uploader = AliyunOSSUploader()
+        >>> result = uploader.upload_file(
+        ...     "/path/to/video.ts",
+        ...     progress_callback=lambda current, total: print(f"{current}/{total}")
+        ... )
+        >>> print(result['url'])
+    """
+    
+    # 分片上传阈值（100MB）
+    MULTIPART_THRESHOLD = 100 * 1024 * 1024
+    
+    # 每个分片大小（10MB）
+    PART_SIZE = 10 * 1024 * 1024
+    
+    # 最大重试次数
+    MAX_RETRIES = 3
+    
+    def __init__(self):
+        """初始化阿里云OSS客户端"""
+        self.bucket = None
+        self.auth = None
+        self._init_client()
+    
+    def _init_client(self):
+        """初始化OSS客户端
+        
+        Raises:
+            RuntimeError: OSS未启用或配置不完整
+            ImportError: oss2库未安装
+        """
+        if not settings.oss_enabled:
+            logger.info("OSS上传未启用")
+            return
+        
+        if not oss2:
+            raise ImportError("请安装: pip install oss2")
+        
+        # 验证必需配置
+        required_configs = [
+            ('oss_access_key_id', settings.oss_access_key_id),
+            ('oss_access_key_secret', settings.oss_access_key_secret),
+            ('oss_bucket_name', settings.oss_bucket_name),
+            ('oss_endpoint', settings.oss_endpoint),
+        ]
+        
+        missing = [name for name, value in required_configs if not value]
+        if missing:
+            raise RuntimeError(f"OSS配置不完整，缺少: {', '.join(missing)}")
+        
+        try:
+            # 创建认证
+            self.auth = oss2.Auth(
+                settings.oss_access_key_id,
+                settings.oss_access_key_secret
+            )
+            
+            # 优先使用内网endpoint（如果配置了）
+            endpoint = settings.oss_internal_endpoint or settings.oss_endpoint
+            
+            # 创建Bucket对象
+            self.bucket = oss2.Bucket(
+                self.auth,
+                endpoint,
+                settings.oss_bucket_name
+            )
+            
+            logger.info(
+                "阿里云OSS客户端初始化成功",
+                extra={
+                    "bucket": settings.oss_bucket_name,
+                    "endpoint": endpoint,
+                    "use_internal": bool(settings.oss_internal_endpoint)
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"阿里云OSS初始化失败: {e}", exc_info=True)
+            raise
+    
+    def upload_file(
+        self,
+        file_path: str,
+        object_key: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        force_multipart: bool = False
+    ) -> Dict[str, str]:
+        """上传文件到阿里云OSS
+        
+        根据文件大小自动选择普通上传或分片上传。
+        
+        Args:
+            file_path: 本地文件路径
+            object_key: OSS对象键，默认使用日期/文件名格式
+            progress_callback: 进度回调函数 callback(current_bytes, total_bytes)
+            force_multipart: 是否强制使用分片上传
+            
+        Returns:
+            上传结果字典:
+            {
+                'bucket': str,        # Bucket名称
+                'key': str,           # 对象键
+                'url': str,           # 访问URL
+                'etag': str,          # ETag
+                'size': int,          # 文件大小
+                'upload_type': str    # 上传类型: simple/multipart
+            }
+            
+        Raises:
+            RuntimeError: OSS未启用或未初始化
+            FileNotFoundError: 文件不存在
+            Exception: 上传失败
+            
+        Examples:
+            >>> # 普通上传
+            >>> result = uploader.upload_file("/path/to/small.ts")
+            
+            >>> # 带进度回调
+            >>> def callback(current, total):
+            ...     print(f"进度: {current}/{total} ({current/total*100:.1f}%)")
+            >>> result = uploader.upload_file("/path/to/large.ts", progress_callback=callback)
+        """
+        if not settings.oss_enabled or not self.bucket:
+            raise RuntimeError("OSS未启用或客户端未初始化")
+        
+        # 验证文件存在
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"文件不存在: {file_path}")
+        
+        # 生成object_key
+        if not object_key:
+            object_key = self._generate_object_key(file_path.name)
+        
+        # 获取文件大小
+        file_size = file_path.stat().st_size
+        
+        logger.info(
+            "开始上传文件",
+            extra={
+                "file": str(file_path),
+                "size": file_size,
+                "key": object_key
+            }
+        )
+        
+        try:
+            # 根据文件大小选择上传方式
+            if force_multipart or file_size >= self.MULTIPART_THRESHOLD:
+                result = self._multipart_upload(
+                    str(file_path),
+                    object_key,
+                    file_size,
+                    progress_callback
+                )
+                upload_type = "multipart"
+            else:
+                result = self._simple_upload(
+                    str(file_path),
+                    object_key,
+                    file_size,
+                    progress_callback
+                )
+                upload_type = "simple"
+            
+            # 生成访问URL
+            url = self._generate_url(object_key)
+            
+            return {
+                'bucket': settings.oss_bucket_name,
+                'key': object_key,
+                'url': url,
+                'etag': result.etag,
+                'size': file_size,
+                'upload_type': upload_type
+            }
+            
+        except Exception as e:
+            logger.error(
+                "文件上传失败",
+                extra={
+                    "file": str(file_path),
+                    "key": object_key,
+                    "error": str(e)
+                },
+                exc_info=True
+            )
+            raise
+    
+    def _simple_upload(
+        self,
+        file_path: str,
+        object_key: str,
+        file_size: int,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> oss2.models.PutObjectResult:
+        """简单上传（小文件）
+        
+        Args:
+            file_path: 文件路径
+            object_key: 对象键
+            file_size: 文件大小
+            progress_callback: 进度回调
+            
+        Returns:
+            上传结果对象
+        """
+        # 创建进度回调包装器
+        if progress_callback:
+            def percentage_callback(consumed_bytes, total_bytes):
+                if total_bytes:
+                    progress_callback(consumed_bytes, total_bytes)
+        else:
+            percentage_callback = None
+        
+        # 执行上传
+        result = self.bucket.put_object_from_file(
+            object_key,
+            file_path,
+            progress_callback=percentage_callback
+        )
+        
+        logger.info(
+            "简单上传完成",
+            extra={
+                "key": object_key,
+                "etag": result.etag,
+                "size": file_size
+            }
+        )
+        
+        return result
+    
+    def _multipart_upload(
+        self,
+        file_path: str,
+        object_key: str,
+        file_size: int,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> oss2.models.PutObjectResult:
+        """分片上传（大文件）
+        
+        支持断点续传和进度跟踪。
+        
+        Args:
+            file_path: 文件路径
+            object_key: 对象键
+            file_size: 文件大小
+            progress_callback: 进度回调
+            
+        Returns:
+            上传结果对象
+        """
+        # 计算分片数量
+        total_parts = (file_size + self.PART_SIZE - 1) // self.PART_SIZE
+        
+        logger.info(
+            "开始分片上传",
+            extra={
+                "key": object_key,
+                "total_size": file_size,
+                "part_size": self.PART_SIZE,
+                "total_parts": total_parts
+            }
+        )
+        
+        # 初始化分片上传
+        upload_id = self.bucket.init_multipart_upload(object_key).upload_id
+        parts = []
+        uploaded_bytes = 0
+        
+        try:
+            with open(file_path, 'rb') as f:
+                for part_number in range(1, total_parts + 1):
+                    # 计算分片范围
+                    offset = (part_number - 1) * self.PART_SIZE
+                    size = min(self.PART_SIZE, file_size - offset)
+                    
+                    # 读取分片数据
+                    f.seek(offset)
+                    data = f.read(size)
+                    
+                    # 上传分片（带重试）
+                    for attempt in range(self.MAX_RETRIES):
+                        try:
+                            result = self.bucket.upload_part(
+                                object_key,
+                                upload_id,
+                                part_number,
+                                data
+                            )
+                            
+                            parts.append(PartInfo(part_number, result.etag))
+                            uploaded_bytes += size
+                            
+                            # 调用进度回调
+                            if progress_callback:
+                                progress_callback(uploaded_bytes, file_size)
+                            
+                            logger.debug(
+                                f"分片上传成功: {part_number}/{total_parts}",
+                                extra={
+                                    "part": part_number,
+                                    "size": size,
+                                    "progress": f"{uploaded_bytes/file_size*100:.1f}%"
+                                }
+                            )
+                            
+                            break
+                            
+                        except Exception as e:
+                            if attempt == self.MAX_RETRIES - 1:
+                                raise
+                            logger.warning(
+                                f"分片上传失败，重试 {attempt + 1}/{self.MAX_RETRIES}",
+                                extra={"part": part_number, "error": str(e)}
+                            )
+            
+            # 完成分片上传
+            result = self.bucket.complete_multipart_upload(
+                object_key,
+                upload_id,
+                parts
+            )
+            
+            logger.info(
+                "分片上传完成",
+                extra={
+                    "key": object_key,
+                    "etag": result.etag,
+                    "parts": total_parts,
+                    "size": file_size
+                }
+            )
+            
+            return result
+            
+        except Exception as e:
+            # 上传失败，取消分片上传
+            try:
+                self.bucket.abort_multipart_upload(object_key, upload_id)
+                logger.info(f"已取消分片上传: {object_key}")
+            except:
+                pass
+            raise
+    
+    def _generate_object_key(self, filename: str) -> str:
+        """生成OSS对象键
+        
+        格式: YYYYMMDD/filename
+        
+        Args:
+            filename: 文件名
+            
+        Returns:
+            对象键字符串
+        """
+        date_prefix = datetime.now().strftime("%Y%m%d")
+        return f"{date_prefix}/{filename}"
+    
+    def _generate_url(self, object_key: str) -> str:
+        """生成访问URL
+        
+        Args:
+            object_key: 对象键
+            
+        Returns:
+            完整的访问URL
+        """
+        # 使用外网endpoint生成URL
+        return f"https://{settings.oss_bucket_name}.{settings.oss_endpoint}/{object_key}"
+    
+    def delete_file(self, object_key: str) -> bool:
+        """删除OSS文件
+        
+        Args:
+            object_key: 对象键
+            
+        Returns:
+            是否删除成功
+            
+        Examples:
+            >>> uploader.delete_file("20251016/video.ts")
+            True
+        """
+        if not settings.oss_enabled or not self.bucket:
+            logger.warning("OSS未启用或客户端未初始化")
+            return False
+        
+        try:
+            self.bucket.delete_object(object_key)
+            logger.info(f"OSS文件删除成功: {object_key}")
+            return True
+            
+        except Exception as e:
+            logger.error(
+                "OSS文件删除失败",
+                extra={"key": object_key, "error": str(e)},
+                exc_info=True
+            )
+            return False
+    
+    def file_exists(self, object_key: str) -> bool:
+        """检查文件是否存在
+        
+        Args:
+            object_key: 对象键
+            
+        Returns:
+            文件是否存在
+        """
+        if not settings.oss_enabled or not self.bucket:
+            return False
+        
+        try:
+            return self.bucket.object_exists(object_key)
+        except Exception as e:
+            logger.error(f"检查文件存在性失败: {e}")
+            return False
+    
+    def get_file_meta(self, object_key: str) -> Optional[Dict[str, any]]:
+        """获取文件元信息
+        
+        Args:
+            object_key: 对象键
+            
+        Returns:
+            文件元信息字典，包含size、etag、last_modified等
+            如果文件不存在返回None
+        """
+        if not settings.oss_enabled or not self.bucket:
+            return None
+        
+        try:
+            meta = self.bucket.get_object_meta(object_key)
+            return {
+                'size': meta.content_length,
+                'etag': meta.etag,
+                'last_modified': meta.last_modified,
+                'content_type': meta.content_type
+            }
+        except oss2.exceptions.NoSuchKey:
+            return None
+        except Exception as e:
+            logger.error(f"获取文件元信息失败: {e}")
+            return None
+    
+    def calculate_md5(self, file_path: str) -> str:
+        """计算文件MD5值
+        
+        用于验证上传完整性。
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            MD5十六进制字符串
+        """
+        md5_hash = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                md5_hash.update(chunk)
+        return md5_hash.hexdigest()
+
+
+# 全局单例
+oss_uploader = AliyunOSSUploader()
