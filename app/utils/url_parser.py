@@ -14,37 +14,37 @@ import re
 class URLParser:
     """URL解析器 - 提取平台和房间ID"""
 
-    # 平台URL模式映射
+    # 平台URL模式映射 - 返回中文平台名称以匹配数据库存储
     PLATFORM_PATTERNS = {
         '抖音': [
-            (r'live\.douyin\.com/(\d+)', 'douyin'),
-            (r'v\.douyin\.com/(\w+)', 'douyin'),
+            (r'live\.douyin\.com/(\d+)', '抖音'),
+            (r'v\.douyin\.com/(\w+)', '抖音'),
         ],
         '快手': [
-            (r'live\.kuaishou\.com/u/([^/\?]+)', 'kuaishou'),
+            (r'live\.kuaishou\.com/u/([^/\?]+)', '快手'),
         ],
         'B站': [
-            (r'live\.bilibili\.com/(\d+)', 'bilibili'),
+            (r'live\.bilibili\.com/(\d+)', 'B站'),
         ],
         '斗鱼': [
-            (r'douyu\.com/([^/\?]+)', 'douyu'),
+            (r'douyu\.com/([^/\?]+)', '斗鱼'),
         ],
         '虎牙': [
-            (r'huya\.com/([^/\?]+)', 'huya'),
+            (r'huya\.com/([^/\?]+)', '虎牙'),
         ],
         'YY': [
-            (r'yy\.com/(\d+)', 'yy'),
+            (r'yy\.com/(\d+)', 'YY'),
         ],
         '小红书': [
-            (r'xiaohongshu\.com/user/profile/(\w+)', 'xiaohongshu'),
-            (r'xhslink\.com/(\w+)', 'xiaohongshu'),
+            (r'xiaohongshu\.com/user/profile/(\w+)', '小红书'),
+            (r'xhslink\.com/(\w+)', '小红书'),
         ],
         'TikTok': [
-            (r'tiktok\.com/@([^/\?]+)', 'tiktok'),
+            (r'tiktok\.com/@([^/\?]+)', 'TikTok'),
         ],
         'Bigo': [
-            (r'bigo\.tv/([^/\?]+)', 'bigo'),
-            (r'slink\.bigovideo\.tv/(\w+)', 'bigo'),
+            (r'bigo\.tv/([^/\?]+)', 'Bigo'),
+            (r'slink\.bigovideo\.tv/(\w+)', 'Bigo'),
         ],
     }
 
@@ -58,15 +58,15 @@ class URLParser:
 
         Returns:
             (platform, room_id) 元组
-            - platform: 平台名称(如: douyin, bilibili, kuaishou等)
+            - platform: 平台中文名称(如: 抖音, B站, 快手等)
             - room_id: 平台房间ID
 
         Examples:
             >>> parse_url('https://live.douyin.com/745964462470')
-            ('douyin', '745964462470')
+            ('抖音', '745964462470')
 
             >>> parse_url('https://live.bilibili.com/21852')
-            ('bilibili', '21852')
+            ('B站', '21852')
         """
         if not url:
             return None, None

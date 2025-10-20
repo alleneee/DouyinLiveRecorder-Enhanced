@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 class LiveInfo(BaseModel):
     """直播间信息"""
+    live_id: str = Field(..., description="session_id")
     live_url: str = Field(..., description="直播间URL")
     live_name: str = Field(..., description="直播间名称/主播名")
 
@@ -34,10 +35,6 @@ class SegmentNotificationRequest(BaseModel):
     """分片通知请求体"""
     live_info: LiveInfo
     sub_video_info: SubVideoInfo
-    video_shard_info: List[VideoShardInfo] = Field(
-        default_factory=list,
-        description="视频分片信息列表(当前版本为空列表,预留扩展)"
-    )
 
     class Config:
         json_schema_extra = {
@@ -53,7 +50,6 @@ class SegmentNotificationRequest(BaseModel):
                     "absolute_start_time": "2025-01-20T10:30:00",
                     "absolute_end_time": "2025-01-20T10:31:00",
                     "serial_num": 0
-                },
-                "video_shard_info": []
+                }
             }
         }

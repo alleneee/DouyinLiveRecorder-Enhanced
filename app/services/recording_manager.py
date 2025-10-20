@@ -109,6 +109,16 @@ class RecordingManager:
 
                     if is_live and old_status != LiveStatus.LIVE:
                         logger.info(f"{log_ctx} 检测到开播, url={room.url}")
+
+                        # 提前生成并设置 session_id,避免竞态条件
+                        if not room.current_session_id:
+                            session_id = str(uuid.uuid4())
+                            session_started_at = datetime.now()
+                            room.current_session_id = session_id
+                            room.current_session_started_at = session_started_at
+                            db.commit()
+                            logger.info(f"{log_ctx} 预创建 session: {session_id[:8]}")
+
                         self._start_recording(db, room)
                     elif not is_live and old_status == LiveStatus.LIVE:
                         logger.info(f"{log_ctx} 检测到下播")
@@ -140,24 +150,24 @@ class RecordingManager:
             return False
 
     def _start_recording(self, db: Session, room: LiveRoom):
-        """启动录制任务 - 使用已有的 session_id 或生成新的"""
-        # 如果当前已经有 session_id(由create接口传入),则使用它
-        # 否则生成新的 session_id(自动开播录制场景)
-        if room.current_session_id:
-            session_id = room.current_session_id
-        else:
+        """启动录制任务 - 使用已有的 session_id"""
+        # session_id 应该已经在调用此方法前设置好
+        # 如果没有(异常情况),则生成新的
+        if not room.current_session_id:
             session_id = str(uuid.uuid4())
+            session_started_at = datetime.now()
+            room.current_session_id = session_id
+            room.current_session_started_at = session_started_at
+            logger.warning(f"session_id 未提前设置,补充生成: {session_id[:8]}")
+        else:
+            session_id = room.current_session_id
 
-        session_started_at = datetime.now()
-
-        # 更新数据库,设置新的会话信息
-        room.current_session_id = session_id
-        room.current_session_started_at = session_started_at
+        # 更新录制状态
         room.record_status = RecordStatus.RECORDING
         db.commit()
 
         log_ctx = _make_log_context(room.platform, room.platform_room_id, session_id)
-        logger.info(f"{log_ctx} 创建新录制会话, room_id={room.id}")
+        logger.info(f"{log_ctx} 启动录制任务, room_id={room.id}")
 
         # 启动录制线程
         thread = threading.Thread(
@@ -180,16 +190,17 @@ class RecordingManager:
             log_ctx = _make_log_context(room.platform, room.platform_room_id, stopped_session_id)
             logger.info(f"{log_ctx} 停止录制,session 结束")
 
-            # 查询该会话的总分片数
+            # 查询该会话的总分片数(此时可能还有分片在上传中)
             segment_count = db.query(func.count(VideoSegment.id)).filter(
                 VideoSegment.session_id == stopped_session_id
             ).scalar() or 0
 
-            # 记录会话结束时间和总分片数
+            # 临时记录会话结束时间和总分片数
+            # 注意:最终值会在所有分片上传完成后由 _update_session_completion_if_needed 更新
             room.current_session_ended_at = datetime.now()
             room.total_segment = segment_count
 
-            logger.info(f"{log_ctx} 会话统计: 总分片数={segment_count}")
+            logger.info(f"{log_ctx} 会话临时统计: 总分片数={segment_count} (可能还有分片在上传中)")
 
         # 清空当前会话信息,下次激活录制时会生成新的 session_id
         room.current_session_id = None
@@ -456,6 +467,69 @@ class RecordingManager:
             import traceback
             logger.error(f"{log_ctx} 异常堆栈: {traceback.format_exc()}")
 
+    def _update_session_completion_if_needed(self, db: Session, video_segment: VideoSegment):
+        """检查并更新 session 完成信息
+        
+        当满足以下条件时更新 room 表:
+        1. 该 session 对应的录制已停止(room.record_status != RECORDING 或 room.current_session_id != segment.session_id)
+        2. 该 session 的所有分片都已上传完成
+        
+        Args:
+            db: 数据库会话
+            video_segment: 刚上传完成的分片
+        """
+        from sqlalchemy import func
+        
+        try:
+            room = db.query(LiveRoom).filter(LiveRoom.id == video_segment.room_id).first()
+            if not room:
+                return
+            
+            session_id = video_segment.session_id
+            log_ctx = _make_log_context(room.platform, room.platform_room_id, session_id)
+            
+            # 检查该 session 是否已经不是当前活跃的 session
+            is_session_ended = (
+                room.current_session_id != session_id or 
+                room.record_status != RecordStatus.RECORDING
+            )
+            
+            if not is_session_ended:
+                # session 还在录制中,不更新
+                return
+            
+            # 查询该 session 的所有分片
+            total_segments = db.query(func.count(VideoSegment.id)).filter(
+                VideoSegment.session_id == session_id
+            ).scalar() or 0
+            
+            uploaded_segments = db.query(func.count(VideoSegment.id)).filter(
+                VideoSegment.session_id == session_id,
+                VideoSegment.status == SegmentStatus.UPLOADED
+            ).scalar() or 0
+            
+            # 如果所有分片都已上传完成
+            if total_segments > 0 and uploaded_segments == total_segments:
+                # 获取最后一个分片的结束时间作为 session 结束时间
+                last_segment = db.query(VideoSegment).filter(
+                    VideoSegment.session_id == session_id
+                ).order_by(VideoSegment.segment_index.desc()).first()
+                
+                if last_segment and last_segment.segment_ended_at:
+                    # 更新 room 表的 session 结束时间和总分片数
+                    room.current_session_ended_at = last_segment.segment_ended_at
+                    room.total_segment = total_segments
+                    db.commit()
+                    
+                    logger.info(
+                        f"{log_ctx} Session 所有分片上传完成,更新统计: "
+                        f"total_segment={total_segments}, "
+                        f"ended_at={last_segment.segment_ended_at}"
+                    )
+        except Exception as e:
+            logger.error(f"更新 session 完成信息失败: {e}", exc_info=True)
+            db.rollback()
+
     def _upload_video_and_audio(self, segment_id: int, video_path: str, 
                                 platform: str, platform_room_id: str, session_id: str):
         """录制完成后处理:抽取音频 → 上传 → 回写数据库 → 删除本地文件"""
@@ -503,7 +577,10 @@ class RecordingManager:
             video_segment.status = SegmentStatus.UPLOADED
             db.commit()
 
-            # 4. 发送分片完成通知
+            # 4. 检查是否是最后一个分片,更新 room 表统计信息
+            self._update_session_completion_if_needed(db, video_segment)
+
+            # 5. 发送分片完成通知
             try:
                 from app.services.segment_notifier import segment_notifier
                 segment_notifier.send_notification_sync(db, segment_id)
@@ -511,7 +588,7 @@ class RecordingManager:
                 logger.error(f"{log_ctx} 发送分片通知失败: {notify_error}", exc_info=True)
                 # 通知失败不影响主流程
 
-            # 5. 删除本地文件
+            # 6. 删除本地文件
             if os.path.exists(video_path):
                 os.remove(video_path)
             if audio_path and os.path.exists(audio_path):
