@@ -2,14 +2,14 @@
 
 只保留核心字段：
 - 关联信息：room_id（外键关联live_rooms表）
-- 会话信息：session_id, session_started_at, session_ended_at
+- 会话信息：session_id（会话的开始/结束时间存储在live_rooms表）
 - 分片信息：segment_index, segment_started_at, segment_ended_at, duration
 - OSS地址：oss_video_url, oss_audio_url
 - 状态：status, error_message
 
 说明：
 - room_id: 通过外键关联查询主播名称和平台信息，避免数据冗余
-- session_started_at/session_ended_at: 整个直播会话的开始/结束时间（所有分片共享）
+- session_id: 录制会话标识，会话的开始/结束时间存储在live_rooms表中
 - segment_started_at/segment_ended_at: 单个分片的实际开始/结束时间
 - duration: 分片实际时长（秒），可能小于配置的segment_duration（直播提前结束）
 """
@@ -47,9 +47,7 @@ class VideoSegment(Base):
 
     # 会话标识（用于区分同一直播间的多次开播）
     session_id = Column(String(36), nullable=False, index=True, comment="录制会话ID（UUID）")
-    session_started_at = Column(DateTime, nullable=False, index=True, comment="会话开始时间")
-    session_ended_at = Column(DateTime, comment="会话结束时间")
-    
+
     # 录制信息
     segment_index = Column(Integer, comment="切片索引（同一会话内的序号）")
     

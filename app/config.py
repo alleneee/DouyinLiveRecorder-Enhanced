@@ -65,5 +65,8 @@ class Settings(BaseSettings):
     oss_internal_endpoint: str = Field("", description="OSS内网Endpoint（可选，用于ECS内网访问）")
     oss_auto_delete_local: bool = Field(False, description="上传后是否删除本地文件")
 
+    # 分片通知配置
+    segment_notification_url: str = Field("", description="分片上传完成后通知的目标URL(留空则不发送通知)")
+
 
 settings = Settings()

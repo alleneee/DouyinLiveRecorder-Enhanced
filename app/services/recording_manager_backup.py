@@ -359,7 +359,6 @@ class RecordingManager:
             video_segment = VideoSegment(
                 room_id=room_id,
                 session_id=session_id,
-                session_started_at=room.current_session_started_at,
                 segment_index=segment_index,
                 segment_started_at=segment_start_time,
                 segment_ended_at=segment_end_time,

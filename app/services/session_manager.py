@@ -103,8 +103,6 @@ class RecordingSession:
             segment = VideoSegment(
                 room_id=self.room_id,
                 session_id=self.session_id,
-                session_started_at=self.session_started_at,
-                session_ended_at=None,  # 录制中，暂时为空
                 streamer_name=streamer_name,
                 platform=platform,
                 segment_index=segment_index,

@@ -171,13 +171,26 @@ class RecordingManager:
 
     def _stop_recording(self, db: Session, room: LiveRoom):
         """停止录制任务 - 清空 session 信息,为下次录制准备"""
+        from sqlalchemy import func
+
         # 记录被终止的 session_id
         stopped_session_id = room.current_session_id
-        
+
         if stopped_session_id:
             log_ctx = _make_log_context(room.platform, room.platform_room_id, stopped_session_id)
             logger.info(f"{log_ctx} 停止录制,session 结束")
-        
+
+            # 查询该会话的总分片数
+            segment_count = db.query(func.count(VideoSegment.id)).filter(
+                VideoSegment.session_id == stopped_session_id
+            ).scalar() or 0
+
+            # 记录会话结束时间和总分片数
+            room.current_session_ended_at = datetime.now()
+            room.total_segment = segment_count
+
+            logger.info(f"{log_ctx} 会话统计: 总分片数={segment_count}")
+
         # 清空当前会话信息,下次激活录制时会生成新的 session_id
         room.current_session_id = None
         room.current_session_started_at = None
@@ -419,7 +432,6 @@ class RecordingManager:
                 platform=room.platform,
                 platform_room_id=room.platform_room_id,
                 session_id=session_id,
-                session_started_at=room.current_session_started_at,
                 segment_index=segment_index,
                 segment_started_at=segment_start_time,
                 segment_ended_at=segment_end_time,
@@ -491,7 +503,15 @@ class RecordingManager:
             video_segment.status = SegmentStatus.UPLOADED
             db.commit()
 
-            # 4. 删除本地文件
+            # 4. 发送分片完成通知
+            try:
+                from app.services.segment_notifier import segment_notifier
+                segment_notifier.send_notification_sync(db, segment_id)
+            except Exception as notify_error:
+                logger.error(f"{log_ctx} 发送分片通知失败: {notify_error}", exc_info=True)
+                # 通知失败不影响主流程
+
+            # 5. 删除本地文件
             if os.path.exists(video_path):
                 os.remove(video_path)
             if audio_path and os.path.exists(audio_path):

@@ -183,10 +183,10 @@ async def get_rooms_status(
     Returns:
         所有直播间的列表和统计信息
     """
-    # 异步查询，按最后直播时间倒序
+    # 异步查询，按更新时间倒序(最近活跃的在前面)
     result = await db.execute(
         select(LiveRoom)
-        .order_by(LiveRoom.last_live_time.desc().nullslast())
+        .order_by(LiveRoom.updated_at.desc())
     )
     rooms = result.scalars().all()
     
@@ -563,3 +563,126 @@ async def check_live_status(
                 "url": request.url
             }
         )
+
+
+@router.post(
+    "/query-by-url",
+    response_model=Dict,
+    summary="基于URL查询直播间完整信息",
+    description="""
+    通过直播间URL查询room表和segment表的全部信息
+    
+    **功能**:
+    - 解析URL提取平台和房间ID
+    - 查询直播间基础信息
+    - 查询所有视频分片信息
+    - 返回统计数据
+    
+    **支持平台**:
+    - 抖音 (douyin)
+    - 快手 (kuaishou)  
+    - B站 (bilibili)
+    - 斗鱼 (douyu)
+    - 虎牙 (huya)
+    - 其他平台...
+    """
+)
+async def query_room_by_url(
+    url: str,
+    db: AsyncSession = Depends(get_db)
+) -> Dict:
+    """
+    基于URL查询直播间完整信息
+    
+    Args:
+        url: 直播间URL
+        db: 数据库会话
+        
+    Returns:
+        包含room和segments完整信息的响应
+    """
+    from app.utils.url_parser import parse_live_url
+    from app.models.video_segment import VideoSegment
+    from app.schemas.room_detail import (
+        LiveRoomDetail, 
+        VideoSegmentDetail, 
+        RoomDetailResponse
+    )
+    
+    # 1. 解析URL
+    platform, room_id = parse_live_url(url)
+    
+    if not platform or not room_id:
+        return {
+            "success": False,
+            "message": "无法解析URL,请检查URL格式是否正确",
+            "data": None,
+            "parsed_platform": platform,
+            "parsed_room_id": room_id
+        }
+    
+    # 2. 查询直播间信息
+    result = await db.execute(
+        select(LiveRoom)
+        .where(LiveRoom.platform == platform)
+        .where(LiveRoom.platform_room_id == room_id)
+    )
+    room = result.scalar_one_or_none()
+    
+    if not room:
+        return {
+            "success": False,
+            "message": f"未找到对应的直播间 (平台:{platform}, 房间ID:{room_id})",
+            "data": None,
+            "parsed_platform": platform,
+            "parsed_room_id": room_id
+        }
+    
+    # 3. 查询所有视频分片
+    segments_result = await db.execute(
+        select(VideoSegment)
+        .where(VideoSegment.room_id == room.id and VideoSegment.platform == platform)
+        .order_by(VideoSegment.created_at.desc(), VideoSegment.segment_index.asc())
+    )
+    segments = segments_result.scalars().all()
+
+    # 4. 计算统计信息
+    stats_result = await db.execute(
+        select(
+            func.count(func.distinct(VideoSegment.session_id)).label('total_sessions'),
+            func.count(VideoSegment.id).label('total_segments'),
+            func.sum(VideoSegment.duration).label('total_duration'),
+            func.min(VideoSegment.segment_started_at).label('first_segment_at'),
+            func.max(VideoSegment.segment_ended_at).label('last_segment_at')
+        )
+        .where(VideoSegment.room_id == room.id)
+    )
+    stats = stats_result.first()
+    
+    # 5. 构建响应
+    room_detail = LiveRoomDetail.model_validate(room)
+    segment_details = [VideoSegmentDetail.model_validate(seg) for seg in segments]
+    
+    statistics = {
+        "total_sessions": stats.total_sessions or 0,
+        "total_segments": stats.total_segments or 0,
+        "total_duration_seconds": stats.total_duration or 0,
+        "total_duration_hours": round((stats.total_duration or 0) / 3600, 2),
+        "first_segment_at": stats.first_segment_at.isoformat() if stats.first_segment_at else None,
+        "last_segment_at": stats.last_segment_at.isoformat() if stats.last_segment_at else None,
+    }
+    
+    detail_response = RoomDetailResponse(
+        room=room_detail,
+        segments=segment_details,
+        total_segments=len(segment_details),
+        statistics=statistics
+    )
+    
+    return {
+        "success": True,
+        "message": "查询成功",
+        "data": detail_response.model_dump(),
+        "parsed_platform": platform,
+        "parsed_room_id": room_id
+    }
