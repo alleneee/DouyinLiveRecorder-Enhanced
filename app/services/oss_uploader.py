@@ -3,8 +3,9 @@ import os
 import hashlib
 from datetime import datetime
 from typing import Dict, Optional, Callable
-from loguru import logger
 from pathlib import Path
+
+from app.logger import logger
 
 try:
     import oss2
@@ -111,7 +112,8 @@ class AliyunOSSUploader:
         file_path: str,
         object_key: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
-        force_multipart: bool = False
+        force_multipart: bool = False,
+        log_context: str = ""
     ) -> Dict[str, str]:
         """上传文件到阿里云OSS
         
@@ -119,9 +121,10 @@ class AliyunOSSUploader:
         
         Args:
             file_path: 本地文件路径
-            object_key: OSS对象键，默认使用日期/文件名格式
+            object_key: OSS对象键,默认使用日期/文件名格式
             progress_callback: 进度回调函数 callback(current_bytes, total_bytes)
             force_multipart: 是否强制使用分片上传
+            log_context: 日志上下文前缀,格式如 "[抖音 | 296728101980 | c840ef38 | seg48]"
             
         Returns:
             上传结果字典:
@@ -147,6 +150,12 @@ class AliyunOSSUploader:
             >>> def callback(current, total):
             ...     print(f"进度: {current}/{total} ({current/total*100:.1f}%)")
             >>> result = uploader.upload_file("/path/to/large.ts", progress_callback=callback)
+            
+            >>> # 带业务上下文
+            >>> result = uploader.upload_file(
+            ...     "/path/to/video.ts",
+            ...     log_context="[抖音 | 296728101980 | c840ef38 | seg48]"
+            ... )
         """
         if not settings.oss_enabled or not self.bucket:
             raise RuntimeError("OSS未启用或客户端未初始化")
@@ -163,15 +172,6 @@ class AliyunOSSUploader:
         # 获取文件大小
         file_size = file_path.stat().st_size
         
-        logger.info(
-            "开始上传文件",
-            extra={
-                "file": str(file_path),
-                "size": file_size,
-                "key": object_key
-            }
-        )
-        
         try:
             # 根据文件大小选择上传方式
             if force_multipart or file_size >= self.MULTIPART_THRESHOLD:
@@ -179,7 +179,8 @@ class AliyunOSSUploader:
                     str(file_path),
                     object_key,
                     file_size,
-                    progress_callback
+                    progress_callback,
+                    log_context
                 )
                 upload_type = "multipart"
             else:
@@ -187,12 +188,15 @@ class AliyunOSSUploader:
                     str(file_path),
                     object_key,
                     file_size,
-                    progress_callback
+                    progress_callback,
+                    log_context
                 )
                 upload_type = "simple"
-            
+
             # 生成访问URL
             url = self._generate_url(object_key)
+
+            logger.info(f"{log_context} OSS上传成功, type={upload_type}, size={file_size//1024//1024}MB")
             
             return {
                 'bucket': settings.oss_bucket_name,
@@ -205,12 +209,7 @@ class AliyunOSSUploader:
             
         except Exception as e:
             logger.error(
-                "文件上传失败",
-                extra={
-                    "file": str(file_path),
-                    "key": object_key,
-                    "error": str(e)
-                },
+                f"{log_context} OSS上传失败: {e}",
                 exc_info=True
             )
             raise
@@ -220,15 +219,17 @@ class AliyunOSSUploader:
         file_path: str,
         object_key: str,
         file_size: int,
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        log_context: str = ""
     ) -> oss2.models.PutObjectResult:
-        """简单上传（小文件）
+        """简单上传(小文件)
         
         Args:
             file_path: 文件路径
             object_key: 对象键
             file_size: 文件大小
             progress_callback: 进度回调
+            log_context: 日志上下文前缀
             
         Returns:
             上传结果对象
@@ -247,16 +248,7 @@ class AliyunOSSUploader:
             file_path,
             progress_callback=percentage_callback
         )
-        
-        logger.info(
-            "简单上传完成",
-            extra={
-                "key": object_key,
-                "etag": result.etag,
-                "size": file_size
-            }
-        )
-        
+
         return result
     
     def _multipart_upload(
@@ -264,9 +256,10 @@ class AliyunOSSUploader:
         file_path: str,
         object_key: str,
         file_size: int,
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        log_context: str = ""
     ) -> oss2.models.PutObjectResult:
-        """分片上传（大文件）
+        """分片上传(大文件)
         
         支持断点续传和进度跟踪。
         
@@ -275,40 +268,31 @@ class AliyunOSSUploader:
             object_key: 对象键
             file_size: 文件大小
             progress_callback: 进度回调
+            log_context: 日志上下文前缀
             
         Returns:
             上传结果对象
         """
         # 计算分片数量
         total_parts = (file_size + self.PART_SIZE - 1) // self.PART_SIZE
-        
-        logger.info(
-            "开始分片上传",
-            extra={
-                "key": object_key,
-                "total_size": file_size,
-                "part_size": self.PART_SIZE,
-                "total_parts": total_parts
-            }
-        )
-        
+
         # 初始化分片上传
         upload_id = self.bucket.init_multipart_upload(object_key).upload_id
         parts = []
         uploaded_bytes = 0
-        
+
         try:
             with open(file_path, 'rb') as f:
                 for part_number in range(1, total_parts + 1):
                     # 计算分片范围
                     offset = (part_number - 1) * self.PART_SIZE
                     size = min(self.PART_SIZE, file_size - offset)
-                    
+
                     # 读取分片数据
                     f.seek(offset)
                     data = f.read(size)
-                    
-                    # 上传分片（带重试）
+
+                    # 上传分片(带重试)
                     for attempt in range(self.MAX_RETRIES):
                         try:
                             result = self.bucket.upload_part(
@@ -317,57 +301,36 @@ class AliyunOSSUploader:
                                 part_number,
                                 data
                             )
-                            
+
                             parts.append(PartInfo(part_number, result.etag))
                             uploaded_bytes += size
-                            
+
                             # 调用进度回调
                             if progress_callback:
                                 progress_callback(uploaded_bytes, file_size)
-                            
-                            logger.debug(
-                                f"分片上传成功: {part_number}/{total_parts}",
-                                extra={
-                                    "part": part_number,
-                                    "size": size,
-                                    "progress": f"{uploaded_bytes/file_size*100:.1f}%"
-                                }
-                            )
-                            
+
                             break
-                            
+
                         except Exception as e:
                             if attempt == self.MAX_RETRIES - 1:
                                 raise
                             logger.warning(
-                                f"分片上传失败，重试 {attempt + 1}/{self.MAX_RETRIES}",
-                                extra={"part": part_number, "error": str(e)}
+                                f"{log_context} OSS分片{part_number}上传失败,重试 {attempt + 1}/{self.MAX_RETRIES}"
                             )
-            
+
             # 完成分片上传
             result = self.bucket.complete_multipart_upload(
                 object_key,
                 upload_id,
                 parts
             )
-            
-            logger.info(
-                "分片上传完成",
-                extra={
-                    "key": object_key,
-                    "etag": result.etag,
-                    "parts": total_parts,
-                    "size": file_size
-                }
-            )
-            
+
             return result
             
         except Exception as e:
-            # 上传失败，取消分片上传
+            # 上传失败,取消分片上传
             try:
                 self.bucket.abort_multipart_upload(object_key, upload_id)
-                logger.info(f"已取消分片上传: {object_key}")
             except:
                 pass
             raise

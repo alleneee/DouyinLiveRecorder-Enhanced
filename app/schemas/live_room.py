@@ -10,8 +10,9 @@ class LiveRoomBase(BaseModel):
     quality: Optional[str] = Field("原画", description="录制质量")
     streamer_name: Optional[str] = Field(None, description="主播名称")
     is_enabled: Optional[bool] = Field(True, description="是否启用监控")
-    auto_record: Optional[bool] = Field(True, description="是否自动录制")
+    auto_record: Optional[bool] = Field(False, description="是否自动录制")
     remark: Optional[str] = Field(None, description="备注")
+    session_id: Optional[str] = Field(None, description="当前会话ID")
 
 
 class LiveRoomCreate(LiveRoomBase):
@@ -89,3 +90,29 @@ class SessionStatsResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class LiveStatusCheckRequest(BaseModel):
+    """直播状态检测请求"""
+    url: str = Field(..., description="直播间URL", example="https://live.douyin.com/745964462470")
+
+
+class LiveStatusCheckResponse(BaseModel):
+    """直播状态检测响应"""
+    is_live: bool = Field(..., description="是否正在直播")
+
+
+class ActivateRecordingRequest(BaseModel):
+    """激活录制请求"""
+    url: str = Field(..., description="直播间URL", example="https://live.douyin.com/296728101980")
+    session_id: str = Field(..., description="录制会话ID(由外部系统提供)", example="20250117-001-douyin-296728101980")
+
+
+class StopRecordingRequest(BaseModel):
+    """停止录制请求"""
+    url: str = Field(..., description="直播间URL", example="https://live.douyin.com/296728101980")
+
+
+class StopRecordingResponse(BaseModel):
+    """停止录制响应"""
+    success: bool = Field(..., description="是否成功停止录制")

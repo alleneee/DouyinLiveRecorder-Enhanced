@@ -1,10 +1,10 @@
-"""异步数据库配置"""
+"""异步数据库配置 - 仅支持 MySQL"""
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from app.database import Base  # 导入已有的Base
 from app.config import settings
 
-# 创建异步引擎
-# 将 mysql+pymysql:// 改为 mysql+aiomysql://
+# 创建异步引擎 - 仅支持 MySQL
+# 自动转换 pymysql -> aiomysql
 if "mysql+pymysql://" in settings.database_url:
     async_database_url = settings.database_url.replace("mysql+pymysql://", "mysql+aiomysql://")
 elif "mysql://" in settings.database_url and "mysql+aiomysql://" not in settings.database_url:
@@ -16,13 +16,14 @@ else:
 if "?" in async_database_url:
     async_database_url = async_database_url.split("?")[0]
 
+# MySQL 异步引擎配置
 async_engine = create_async_engine(
     async_database_url,
     echo=False,
     pool_pre_ping=True,
     pool_size=20,
     max_overflow=40,
-    connect_args={"charset": "utf8mb4"}  # 通过 connect_args 传递 charset
+    connect_args={"charset": "utf8mb4"}
 )
 
 # 创建异步会话工厂

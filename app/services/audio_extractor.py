@@ -3,8 +3,8 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
-from loguru import logger
 
+from app.logger import logger
 from app.config import settings
 
 

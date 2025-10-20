@@ -1,63 +1,31 @@
 """直播间管理API - 异步版本（符合Python-Pro规范）"""
+from typing import Dict, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from loguru import logger
-from typing import Dict
+import asyncio
 
+from app.logger import logger
 from app.dependencies import get_db
 from app.models.live_room import LiveRoom, RecordStatus, LiveStatus
 from app.schemas.live_room import (
     LiveRoomCreate,
     LiveRoomResponse,
-    LiveRoomListResponse
+    LiveRoomListResponse,
+    LiveStatusCheckRequest,
+    LiveStatusCheckResponse,
+    ActivateRecordingRequest,
+    StopRecordingRequest,
+    StopRecordingResponse
 )
 from app.services.recording_manager import recording_manager
+from app.services.live_room_service import live_room_service
 
 router = APIRouter(prefix="/api/live-rooms", tags=["直播间管理"])
 
 
-# 平台映射常量
-PLATFORM_MAP: Dict[str, str] = {
-    'douyin.com': '抖音',
-    'tiktok.com': 'TikTok',
-    'kuaishou.com': '快手',
-    'huya.com': '虎牙',
-    'douyu.com': '斗鱼',
-    'bilibili.com': 'B站',
-    'xiaohongshu.com': '小红书',
-    'yy.com': 'YY',
-    'bigo.tv': 'Bigo',
-    'twitch.tv': 'TwitchTV',
-    'youtube.com': 'Youtube',
-}
-
-
-def extract_platform_from_url(url: str) -> str:
-    """从直播间URL提取平台名称
-    
-    根据URL中的域名关键字识别直播平台。
-    
-    Args:
-        url: 直播间URL
-        
-    Returns:
-        平台名称（中文），如果无法识别则返回"未知平台"
-        
-    Examples:
-        >>> extract_platform_from_url("https://live.douyin.com/123")
-        '抖音'
-        >>> extract_platform_from_url("https://unknown.com/live")
-        '未知平台'
-    """
-    for domain, platform in PLATFORM_MAP.items():
-        if domain in url:
-            return platform
-    return '未知平台'
-
-
 @router.post(
-    "",
+    "/create",
     response_model=LiveRoomResponse,
     status_code=status.HTTP_201_CREATED,
     summary="新增监控直播间",
@@ -87,22 +55,9 @@ async def create_live_room(
     Raises:
         HTTPException: 400 - URL已存在
         HTTPException: 500 - 内部服务器错误
-        
-    Examples:
-        >>> # 请求示例
-        >>> POST /api/live-rooms
-        >>> {
-        >>>     "url": "https://live.douyin.com/745964462470",
-        >>>     "streamer_name": "测试主播",
-        >>>     "quality": "原画"
-        >>> }
     """
-    # 异步检查URL是否已存在
-    result = await db.execute(
-        select(LiveRoom).where(LiveRoom.url == room.url)
-    )
-    existing = result.scalar_one_or_none()
-    
+    # 检查URL是否已存在
+    existing = await live_room_service.check_url_exists(db, room.url)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -113,41 +68,12 @@ async def create_live_room(
             }
         )
     
-    # 提取平台
-    platform = extract_platform_from_url(room.url)
+    # 调用服务层创建直播间
+    db_room = await live_room_service.create_live_room(db, room)
     
-    # 创建直播间记录
-    db_room = LiveRoom(
-        url=room.url,
-        platform=platform,
-        quality=room.quality or "原画",
-        streamer_name=room.streamer_name,
-        is_enabled=room.is_enabled if room.is_enabled is not None else True,
-        auto_record=room.auto_record if room.auto_record is not None else True,
-        remark=room.remark,
-        record_status=RecordStatus.IDLE,
-        live_status=LiveStatus.UNKNOWN
-    )
-    
-    db.add(db_room)
-    await db.commit()  # ✅ 异步commit
-    await db.refresh(db_room)  # ✅ 异步refresh
-    
-    logger.info(
-        "创建直播间",
-        extra={
-            "room_id": db_room.id,
-            "platform": platform,
-            "url": room.url,
-            "enabled": db_room.is_enabled
-        }
-    )
-    
-    # 如果启用，立即启动监听（在后台线程中）
+    # 如果启用，启动监听线程
     if db_room.is_enabled:
         try:
-            # 注意：recording_manager是同步的，在后台线程中运行
-            import asyncio
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
@@ -161,9 +87,6 @@ async def create_live_room(
                 extra={"room_id": db_room.id, "error": str(e)},
                 exc_info=True
             )
-            db_room.record_status = RecordStatus.ERROR
-            db_room.last_error_message = str(e)
-            await db.commit()
     
     return db_room
 
@@ -192,9 +115,6 @@ async def delete_live_room(
         
     Raises:
         HTTPException: 404 - 直播间不存在
-        
-    Examples:
-        >>> DELETE /api/live-rooms/1
     """
     # 异步查询
     result = await db.execute(
@@ -262,9 +182,6 @@ async def get_rooms_status(
         
     Returns:
         所有直播间的列表和统计信息
-        
-    Examples:
-        >>> GET /api/live-rooms/status
     """
     # 异步查询，按最后直播时间倒序
     result = await db.execute(
@@ -309,9 +226,6 @@ async def get_room_status(
         
     Raises:
         HTTPException: 404 - 直播间不存在
-        
-    Examples:
-        >>> GET /api/live-rooms/1/status
     """
     result = await db.execute(
         select(LiveRoom).where(LiveRoom.id == room_id)
@@ -332,16 +246,19 @@ async def get_room_status(
 
 
 @router.post(
-    "/{room_id}/activate",
+    "/activate",
     response_model=LiveRoomResponse,
     summary="激活录制",
     description="手动激活指定直播间的录制任务"
 )
 async def activate_recording(
-    room_id: int,
+    request: ActivateRecordingRequest,
     db: AsyncSession = Depends(get_db)
 ) -> LiveRoomResponse:
     """激活录制（异步）
+    
+    通过直播间URL激活录制任务。
+    URL会被解析为平台和房间ID，然后通过业务主键查询。
     
     手动触发录制任务，录制状态流转：
     1. IDLE/FINISHED → PENDING（待录制）
@@ -349,7 +266,7 @@ async def activate_recording(
     3. RECORDING → FINISHED（录制结束）
     
     Args:
-        room_id: 直播间ID
+        request: 激活录制请求，包含直播间URL
         db: 异步数据库会话（自动注入）
         
     Returns:
@@ -358,23 +275,23 @@ async def activate_recording(
     Raises:
         HTTPException: 404 - 直播间不存在
         HTTPException: 400 - 录制已在进行中
-        
-    Examples:
-        >>> POST /api/live-rooms/1/activate
     """
-    # 查询直播间
-    result = await db.execute(
-        select(LiveRoom).where(LiveRoom.id == room_id)
-    )
-    room = result.scalar_one_or_none()
+    # 通过URL解析查询直播间（使用 platform + platform_room_id）
+    room = await live_room_service.get_room_by_url_parsed(db, request.url)
     
     if not room:
+        # 提取平台和房间ID用于错误提示
+        platform = live_room_service.extract_platform_from_url(request.url)
+        platform_room_id = live_room_service.extract_room_id_from_url(request.url)
+        
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
                 "error": "room_not_found",
-                "message": "直播间不存在",
-                "room_id": room_id
+                "message": "直播间不存在，请先创建监控",
+                "url": request.url,
+                "platform": platform,
+                "platform_room_id": platform_room_id
             }
         )
     
@@ -385,7 +302,8 @@ async def activate_recording(
             detail={
                 "error": "already_recording",
                 "message": "录制已在进行中",
-                "room_id": room_id,
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id,
                 "current_status": room.record_status
             }
         )
@@ -396,7 +314,8 @@ async def activate_recording(
             detail={
                 "error": "already_pending",
                 "message": "录制任务已在待录制队列中",
-                "room_id": room_id,
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id,
                 "current_status": room.record_status
             }
         )
@@ -410,37 +329,51 @@ async def activate_recording(
     logger.info(
         "激活录制",
         extra={
-            "room_id": room_id,
+            "db_id": room.id,
             "platform": room.platform,
+            "platform_room_id": room.platform_room_id,
+            "url": request.url,
             "status": "pending"
         }
     )
     
-    # 在后台线程中启动录制
+    # 在后台线程中启动录制,传入外部提供的 session_id
     try:
-        import asyncio
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None,
             recording_manager.activate_recording,
-            room_id
+            room.id,
+            request.session_id  # 传入外部 session_id
         )
-        logger.info("录制任务已提交", extra={"room_id": room_id})
+        logger.info(
+            "录制任务已提交",
+            extra={
+                "db_id": room.id,
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id
+            }
+        )
     except Exception as e:
         logger.error(
             "启动录制失败",
-            extra={"room_id": room_id, "error": str(e)},
+            extra={
+                "db_id": room.id,
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id,
+                "error": str(e)
+            },
             exc_info=True
         )
         room.record_status = RecordStatus.ERROR
-        room.last_error_message = str(e)
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "error": "recording_start_failed",
                 "message": f"启动录制失败: {str(e)}",
-                "room_id": room_id
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id
             }
         )
     
@@ -448,50 +381,53 @@ async def activate_recording(
 
 
 @router.post(
-    "/{room_id}/stop",
-    response_model=LiveRoomResponse,
+    "/stop",
+    response_model=StopRecordingResponse,
     summary="停止录制",
     description="手动停止指定直播间的录制任务"
 )
 async def stop_recording(
-    room_id: int,
+    request: StopRecordingRequest,
     db: AsyncSession = Depends(get_db)
-) -> LiveRoomResponse:
+) -> StopRecordingResponse:
     """停止录制（异步）
-    
+
+    通过直播间URL停止录制任务。
+    URL会被解析为平台和房间ID，然后通过业务主键查询。
+
     手动停止正在进行的录制任务：
     - RECORDING → FINISHED（录制结束）
-    
+
     Args:
-        room_id: 直播间ID
+        request: 停止录制请求，包含直播间URL
         db: 异步数据库会话（自动注入）
-        
+
     Returns:
-        更新后的直播间信息
-        
+        是否成功停止录制（true/false）
+
     Raises:
         HTTPException: 404 - 直播间不存在
         HTTPException: 400 - 没有正在进行的录制
-        
-    Examples:
-        >>> POST /api/live-rooms/1/stop
     """
-    # 查询直播间
-    result = await db.execute(
-        select(LiveRoom).where(LiveRoom.id == room_id)
-    )
-    room = result.scalar_one_or_none()
-    
+    # 通过URL解析查询直播间（使用 platform + platform_room_id）
+    room = await live_room_service.get_room_by_url_parsed(db, request.url)
+
     if not room:
+        # 提取平台和房间ID用于错误提示
+        platform = live_room_service.extract_platform_from_url(request.url)
+        platform_room_id = live_room_service.extract_room_id_from_url(request.url)
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
                 "error": "room_not_found",
-                "message": "直播间不存在",
-                "room_id": room_id
+                "message": "直播间不存在，请先创建监控",
+                "url": request.url,
+                "platform": platform,
+                "platform_room_id": platform_room_id
             }
         )
-    
+
     # 检查当前录制状态
     if room.record_status != RecordStatus.RECORDING:
         raise HTTPException(
@@ -499,26 +435,39 @@ async def stop_recording(
             detail={
                 "error": "not_recording",
                 "message": "没有正在进行的录制",
-                "room_id": room_id,
-                "current_status": room.record_status
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id,
+                "current_status": room.record_status,
+                "url": request.url
             }
         )
-    
+
     logger.info(
         "停止录制",
         extra={
-            "room_id": room_id,
+            "db_id": room.id,
             "platform": room.platform,
+            "platform_room_id": room.platform_room_id,
+            "url": request.url,
             "session_id": room.current_session_id
         }
     )
-    
+
     # 设置状态为FINISHED，录制线程会检测到并自动停止
     room.record_status = RecordStatus.FINISHED
     await db.commit()
     await db.refresh(room)
-    
-    return room
+
+    logger.info(
+        "录制已停止",
+        extra={
+            "db_id": room.id,
+            "platform": room.platform,
+            "platform_room_id": room.platform_room_id
+        }
+    )
+
+    return StopRecordingResponse(success=True)
 
 
 @router.get(
@@ -537,16 +486,6 @@ async def get_monitor_status() -> Dict:
     
     Returns:
         监听器状态信息字典
-        
-    Examples:
-        >>> GET /api/live-rooms/monitor/status
-        >>> {
-        >>>     "status": "running",
-        >>>     "monitor_threads": 5,
-        >>>     "recording_threads": 2,
-        >>>     "monitoring_rooms": [1, 2, 3, 4, 5],
-        >>>     "recording_rooms": [1, 3]
-        >>> }
     """
     # 在executor中运行同步代码
     import asyncio
@@ -563,3 +502,64 @@ async def get_monitor_status() -> Dict:
         "monitoring_rooms": status_info["monitor_rooms"],
         "recording_rooms": status_info["recording_rooms"]
     }
+
+
+@router.post(
+    "/check-live-status",
+    response_model=LiveStatusCheckResponse,
+    summary="检测直播状态",
+    description="快速检测指定直播间是否正在直播，支持50+平台"
+)
+async def check_live_status(
+    request: LiveStatusCheckRequest
+) -> LiveStatusCheckResponse:
+    """检测直播间状态（异步）
+    
+    无需预先添加直播间，即可快速检测任意平台直播间的实时状态。
+    
+    支持平台：
+    - 国内：抖音、快手、B站、虎牙、斗鱼、YY、小红书等
+    - 国际：TikTok、Twitch、YouTube等
+    
+    Args:
+        request: 直播状态检测请求（只需URL）
+        
+    Returns:
+        是否正在直播（true/false）
+        
+    Raises:
+        HTTPException: 500 - 检测失败（网络错误、平台不支持等）
+    """
+    from app.services.live_recorder import LiveRecorder
+    
+    try:
+        # 创建 LiveRecorder 实例
+        recorder = LiveRecorder(proxy_addr=None, cookies={})
+        
+        # 检测直播状态（使用默认画质）
+        is_live = await recorder.check_live_status(url=request.url)
+        
+        logger.info(
+            "检测直播状态",
+            extra={
+                "url": request.url,
+                "is_live": is_live
+            }
+        )
+        
+        return LiveStatusCheckResponse(is_live=is_live)
+        
+    except Exception as e:
+        logger.error(
+            "检测直播状态失败",
+            extra={"url": request.url, "error": str(e)},
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "check_failed",
+                "message": f"检测直播状态失败: {str(e)}",
+                "url": request.url
+            }
+        )

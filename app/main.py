@@ -2,9 +2,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from loguru import logger
 from sqlalchemy import select
 
+from app.logger import logger
 from app.database_async import init_async_db, AsyncSessionLocal
 from app.routes import live_rooms_router
 from app.config import settings

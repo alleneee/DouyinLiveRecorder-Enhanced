@@ -40,7 +40,11 @@ class VideoSegment(Base):
         index=True,
         comment="直播间ID"
     )
-    
+
+    # 直播平台信息（便于独立查询，无需JOIN）
+    platform = Column(String(50), nullable=False, index=True, comment="直播平台（冗余字段）")
+    platform_room_id = Column(String(100), index=True, comment="平台房间ID（冗余字段）")
+
     # 会话标识（用于区分同一直播间的多次开播）
     session_id = Column(String(36), nullable=False, index=True, comment="录制会话ID（UUID）")
     session_started_at = Column(DateTime, nullable=False, index=True, comment="会话开始时间")

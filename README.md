@@ -235,6 +235,23 @@ curl "http://localhost:8000/api/video-files/task/1/files"
 curl -X POST "http://localhost:8000/api/video-files/1/upload"
 ```
 
+#### 检测直播状态（新功能）
+
+快速检测任意直播间是否正在直播，无需预先添加监控：
+
+```bash
+# 检测抖音直播间
+curl -X POST "http://localhost:8000/api/live-rooms/check-live-status" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://live.douyin.com/745964462470"}'
+
+# 响应示例
+{"is_live": true}   # 正在直播
+{"is_live": false}  # 未直播
+```
+
+支持50+平台实时检测，包括：抖音、TikTok、快手、B站、虎牙、斗鱼、YouTube等
+
 ### 核心工作流程
 
 ```
@@ -494,13 +511,20 @@ macOS 执行
 brew install ffmpeg
 ```
 
-4.运行程序
+4.启动 FastAPI 服务
 
-```python
-python main.py
+```bash
+# 使用启动脚本（推荐）
+./start_api.sh
+
+# 或使用 uvicorn 直接启动
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-其中Linux系统请使用`python3 main.py` 运行。
+API 服务启动后访问：
+- API 文档：http://localhost:8000/docs
+- ReDoc：http://localhost:8000/redoc
+- 健康检查：http://localhost:8000/health
 
 &emsp;
 ## 🐋容器运行

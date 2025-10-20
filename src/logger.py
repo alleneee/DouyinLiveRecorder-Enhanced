@@ -11,33 +11,21 @@ custom_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: 
 logger.add(
     sink=sys.stderr,
     format=custom_format,
-    level="DEBUG",
+    level="INFO",  # 控制台输出INFO及以上级别
     colorize=True,
     enqueue=True
 )
 
 script_path = os.path.split(os.path.realpath(sys.argv[0]))[0]
 
+# 统一的日志文件,包含所有级别的日志,便于完整链路追踪
 logger.add(
-    f"{script_path}/logs/streamget.log",
-    level="DEBUG",
-    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-    filter=lambda i: i["level"].name != "INFO",
-    serialize=False,
-    enqueue=True,
-    retention=1,
-    rotation="300 KB",
-    encoding='utf-8'
-)
-
-logger.add(
-    f"{script_path}/logs/PlayURL.log",
+    f"{script_path}/logs/recorder.log",
     level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
-    filter=lambda i: i["level"].name == "INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
     serialize=False,
     enqueue=True,
-    retention=1,
-    rotation="300 KB",
+    retention=7,  # 保留7天
+    rotation="10 MB",  # 每10MB轮转一次
     encoding='utf-8'
 )

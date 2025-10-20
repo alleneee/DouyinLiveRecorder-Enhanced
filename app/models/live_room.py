@@ -53,11 +53,11 @@ class LiveRoom(Base):
     # 当前会话信息（用于追踪正在录制的会话）
     current_session_id = Column(String(36), index=True, comment="当前录制会话ID")
     current_session_started_at = Column(DateTime, comment="当前会话开始时间")
-    
+
     # 时间戳
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
-    
+
     remark = Column(Text, comment="备注")
 
     def __repr__(self):
