@@ -261,7 +261,7 @@ async def activate_recording(
     URL会被解析为平台和房间ID，然后通过业务主键查询。
     
     手动触发录制任务，录制状态流转：
-    1. IDLE/FINISHED → PENDING（待录制）
+    1. PENDING/FINISHED → PENDING（待录制）
     2. PENDING → RECORDING（录制中）
     3. RECORDING → FINISHED（录制结束）
     

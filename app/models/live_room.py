@@ -7,7 +7,6 @@ import enum
 
 class RecordStatus(str, enum.Enum):
     """录制状态"""
-    IDLE = "idle"  # 空闲
     PENDING = "pending"  # 待录制
     RECORDING = "recording"  # 录制中
     FINISHED = "finished"  # 录制结束
@@ -48,7 +47,7 @@ class LiveRoom(Base):
     
     # 当前直播状态（使用String类型避免枚举验证问题）
     live_status = Column(String(20), default="unlive", index=True, comment="直播状态 unlive/live")
-    record_status = Column(String(20), default="idle", index=True, comment="录制状态 idle/recording/finished/error/stopped")
+    record_status = Column(String(20), default="pending", index=True, comment="录制状态 pending/recording/finished/error/stopped")
     
     # 当前会话信息（用于追踪正在录制的会话）
     current_session_id = Column(String(36), index=True, comment="当前录制会话ID")

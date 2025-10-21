@@ -235,7 +235,7 @@ class LiveRoomService:
             is_enabled=room_data.is_enabled if room_data.is_enabled is not None else True,
             auto_record=room_data.auto_record if room_data.auto_record is not None else True,
             remark=room_data.remark,
-            record_status=RecordStatus.IDLE,
+            record_status=RecordStatus.PENDING,
             live_status=LiveStatus.UNKNOWN,
             current_session_id=room_data.session_id
         )

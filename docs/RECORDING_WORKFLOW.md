@@ -113,7 +113,7 @@ db.query(VideoSegment).filter(
 # 清空直播间当前会话
 live_room.current_session_id = None
 live_room.current_session_started_at = None
-live_room.record_status = RecordStatus.IDLE
+live_room.record_status = RecordStatus.PENDING
 ```
 
 ## 🔄 完整代码示例

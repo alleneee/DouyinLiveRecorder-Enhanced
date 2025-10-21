@@ -13,6 +13,9 @@ class Settings(BaseSettings):
         extra="ignore"  # 忽略未定义的字段
     )
 
+    # 环境配置
+    environment: str = Field("prod", description="运行环境(test/prod/dev)")
+
     # 数据库配置（分离式）
     db_driver: str = "mysql+pymysql"
     db_username: str = "root"

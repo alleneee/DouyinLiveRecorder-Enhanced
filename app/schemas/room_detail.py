@@ -51,7 +51,7 @@ class LiveRoomDetail(BaseModel):
 
     # 当前状态
     live_status: str = Field(..., description="直播状态: unlive/live")
-    record_status: str = Field(..., description="录制状态: idle/recording/finished/error/stopped")
+    record_status: str = Field(..., description="录制状态: pending/recording/finished/error/stopped")
 
     # 当前会话信息
     current_session_id: Optional[str] = Field(None, description="当前录制会话ID")

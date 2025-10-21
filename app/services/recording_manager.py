@@ -215,7 +215,7 @@ class RecordingManager:
         # 清空当前会话信息,下次激活录制时会生成新的 session_id
         room.current_session_id = None
         room.current_session_started_at = None
-        room.record_status = RecordStatus.IDLE
+        room.record_status = RecordStatus.PENDING
         db.commit()
         
         if stopped_session_id:

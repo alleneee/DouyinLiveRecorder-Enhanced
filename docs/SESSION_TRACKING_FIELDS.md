@@ -147,7 +147,7 @@ def _stop_recording(self, db: Session, room: LiveRoom):
     # 清空当前会话信息
     room.current_session_id = None
     room.current_session_started_at = None
-    room.record_status = RecordStatus.IDLE
+    room.record_status = RecordStatus.PENDING
     db.commit()
 ```
 

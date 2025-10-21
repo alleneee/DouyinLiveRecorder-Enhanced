@@ -132,8 +132,8 @@ class AliyunOSSUploader:
             上传结果字典:
             {
                 'bucket': str,        # Bucket名称
-                'key': str,           # 对象键
-                'url': str,           # 访问URL
+                'key': str,           # 对象键(相对路径,不包含域名)
+                'url': str,           # 访问URL(仅供参考,不存储到数据库)
                 'etag': str,          # ETag
                 'size': int,          # 文件大小
                 'upload_type': str    # 上传类型: simple/multipart
@@ -145,23 +145,25 @@ class AliyunOSSUploader:
             Exception: 上传失败
             
         Examples:
-            >>> # 普通上传（最简路径）
+            >>> # 普通上传(最简路径)
             >>> result = uploader.upload_file("/path/to/small.ts")
-            >>> # 生成路径: live-recorder/20251021/small.ts
+            >>> # 生成路径: live-recorder/prod/20251021/small.ts
+            >>> # 数据库存储: live-recorder/prod/20251021/small.ts
 
             >>> # 带进度回调
             >>> def callback(current, total):
             ...     print(f"进度: {current}/{total} ({current/total*100:.1f}%)")
             >>> result = uploader.upload_file("/path/to/large.ts", progress_callback=callback)
 
-            >>> # 带业务上下文（完整路径）
+            >>> # 带业务上下文(完整路径)
             >>> result = uploader.upload_file(
             ...     "/path/to/video.ts",
             ...     log_context="[抖音 | 296728101980 | c840ef38 | seg48]"
             ... )
-            >>> # 生成路径: live-recorder/抖音/296728101980/20251021/seg48/video.ts
+            >>> # 生成路径: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+            >>> # 数据库存储: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
             >>> print(result['url'])
-            >>> # https://bucket.oss-cn-beijing.aliyuncs.com/live-recorder/抖音/296728101980/20251021/seg48/video.ts
+            >>> # https://bucket.oss-cn-beijing.aliyuncs.com/live-recorder/prod/抖音/296728101980/20251021/48/video.ts
         """
         if not settings.oss_enabled or not self.bucket:
             raise RuntimeError("OSS未启用或客户端未初始化")
@@ -360,57 +362,52 @@ class AliyunOSSUploader:
             raise
     
     def _generate_object_key(
-        self, 
+        self,
         filename: str,
         platform: Optional[str] = None,
         platform_room_id: Optional[str] = None,
         segment_index: Optional[int] = None
     ) -> str:
         """生成OSS对象键
-        
-        格式: live-recorder/{platform}/{platform_room_id}/{YYYYMMDD}/seg{segment_index}/{filename}
-        
+
+        格式: live-recorder/{环境}/{platform}/{platform_room_id}/{YYYYMMDD}/{segment_index}/{filename}
+
         Args:
             filename: 文件名
-            platform: 平台名称（如"抖音"）
+            platform: 平台名称(如"抖音")
             platform_room_id: 平台直播间ID
             segment_index: 分片索引
-            
+
         Returns:
             对象键字符串
-            
-        Examples:
-            >>> # 完整路径
-            >>> key = uploader._generate_object_key("video.ts", "抖音", "296728101980", 48)
-            >>> # live-recorder/抖音/296728101980/20251021/seg48/video.ts
-            
-            >>> # 最简路径（缺少业务信息时）
-            >>> key = uploader._generate_object_key("video.ts")
-            >>> # live-recorder/20251021/video.ts
         """
         date_prefix = datetime.now().strftime("%Y%m%d")
-        
+
         # 构建路径组件
         path_parts = ["live-recorder"]
-        
+
+        # 添加环境前缀
+        if settings.environment:
+            path_parts.append(settings.environment)
+
         # 添加平台信息
         if platform:
             path_parts.append(platform)
-        
+
         # 添加直播间ID
         if platform_room_id:
             path_parts.append(platform_room_id)
-        
+
         # 添加日期
         path_parts.append(date_prefix)
-        
+
         # 添加分片索引
         if segment_index is not None:
-            path_parts.append(f"seg{segment_index}")
-        
+            path_parts.append(f"{segment_index}")
+
         # 添加文件名
         path_parts.append(filename)
-        
+
         return "/".join(path_parts)
     
     def _generate_url(self, object_key: str) -> str:
