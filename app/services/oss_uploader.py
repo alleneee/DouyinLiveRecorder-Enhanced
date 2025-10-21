@@ -132,12 +132,13 @@ class AliyunOSSUploader:
             上传结果字典:
             {
                 'bucket': str,        # Bucket名称
-                'key': str,           # 对象键(相对路径,不包含域名)
-                'url': str,           # 访问URL(仅供参考,不存储到数据库)
+                'key': str,           # 对象键(相对路径,不包含域名) - 存储到数据库的值
                 'etag': str,          # ETag
                 'size': int,          # 文件大小
                 'upload_type': str    # 上传类型: simple/multipart
             }
+
+            注意: 不再返回完整URL,数据库应存储key字段
             
         Raises:
             RuntimeError: OSS未启用或未初始化
@@ -147,8 +148,9 @@ class AliyunOSSUploader:
         Examples:
             >>> # 普通上传(最简路径)
             >>> result = uploader.upload_file("/path/to/small.ts")
-            >>> # 生成路径: live-recorder/prod/20251021/small.ts
+            >>> # 返回key: live-recorder/prod/20251021/small.ts
             >>> # 数据库存储: live-recorder/prod/20251021/small.ts
+            >>> print(result['key'])
 
             >>> # 带进度回调
             >>> def callback(current, total):
@@ -160,10 +162,10 @@ class AliyunOSSUploader:
             ...     "/path/to/video.ts",
             ...     log_context="[抖音 | 296728101980 | c840ef38 | seg48]"
             ... )
-            >>> # 生成路径: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+            >>> # 返回key: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
             >>> # 数据库存储: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
-            >>> print(result['url'])
-            >>> # https://bucket.oss-cn-beijing.aliyuncs.com/live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+            >>> print(result['key'])
+            >>> # live-recorder/prod/抖音/296728101980/20251021/48/video.ts
         """
         if not settings.oss_enabled or not self.bucket:
             raise RuntimeError("OSS未启用或客户端未初始化")
@@ -219,15 +221,11 @@ class AliyunOSSUploader:
                 )
                 upload_type = "simple"
 
-            # 生成访问URL
-            url = self._generate_url(object_key)
+            logger.info(f"{log_context} OSS上传成功, type={upload_type}, size={file_size//1024//1024}MB, key={object_key}")
 
-            logger.info(f"{log_context} OSS上传成功, type={upload_type}, size={file_size//1024//1024}MB")
-            
             return {
                 'bucket': settings.oss_bucket_name,
-                'key': object_key,
-                'url': url,
+                'key': object_key,  # 只返回相对路径key,不包含域名
                 'etag': result.etag,
                 'size': file_size,
                 'upload_type': upload_type

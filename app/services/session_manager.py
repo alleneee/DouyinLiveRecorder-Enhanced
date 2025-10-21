@@ -168,11 +168,13 @@ class RecordingSession:
     
     async def end_session(self):
         """结束录制会话
-        
-        更新所有分片的session_ended_at，清空live_rooms的当前会话
+
+        更新所有分片的session_ended_at
+        注意: 不清空live_rooms的current_session_id和current_session_started_at,
+              保留最后一次会话信息,下次新会话开始时自动覆盖
         """
         session_ended_at = datetime.now()
-        
+
         async with AsyncSessionLocal() as db:
             # 更新所有分片的session_ended_at
             await db.execute(
@@ -180,18 +182,12 @@ class RecordingSession:
                 .where(VideoSegment.session_id == self.session_id)
                 .values(session_ended_at=session_ended_at)
             )
-            
-            # 清空live_rooms的当前会话
-            result = await db.execute(
-                select(LiveRoom).where(LiveRoom.id == self.room_id)
-            )
-            room = result.scalar_one_or_none()
-            if room:
-                room.current_session_id = None
-                room.current_session_started_at = None
-            
+
+            # 不再清空live_rooms的当前会话信息,保留用于追溯
+            # 下次开播时会自动创建新session并覆盖这些字段
+
             await db.commit()
-        
+
         logger.info(
             f"会话结束: session_id={self.session_id}, "
             f"ended_at={session_ended_at}"

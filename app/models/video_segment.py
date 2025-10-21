@@ -4,7 +4,7 @@
 - 关联信息：room_id（外键关联live_rooms表）
 - 会话信息：session_id（会话的开始/结束时间存储在live_rooms表）
 - 分片信息：segment_index, segment_started_at, segment_ended_at, duration
-- OSS地址：oss_video_url, oss_audio_url
+- OSS路径：oss_video_url, oss_audio_url (存储相对路径key,不包含域名)
 - 状态：status, error_message
 
 说明：
@@ -12,6 +12,9 @@
 - session_id: 录制会话标识，会话的开始/结束时间存储在live_rooms表中
 - segment_started_at/segment_ended_at: 单个分片的实际开始/结束时间
 - duration: 分片实际时长（秒），可能小于配置的segment_duration（直播提前结束）
+- oss_video_url/oss_audio_url: 存储OSS对象键(相对路径),不包含域名前缀
+  例如: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+  访问时需拼接完整URL: https://{bucket}.{endpoint}/{oss_video_url}
 """
 from sqlalchemy import Column, Integer, String, DateTime, Text, Enum, ForeignKey
 from sqlalchemy.sql import func
@@ -56,9 +59,11 @@ class VideoSegment(Base):
     segment_ended_at = Column(DateTime, comment="分片结束时间")
     duration = Column(Integer, comment="分片实际时长(秒)，可能小于配置的segment_duration")
     
-    # OSS地址（上传后的视频和音频地址）
-    oss_video_url = Column(String(1024), comment="OSS视频地址")
-    oss_audio_url = Column(String(1024), comment="OSS音频地址(mp3)")
+    # OSS相对路径(不包含域名,只存储key)
+    # 示例: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+    # 前端访问时需拼接: https://{bucket}.{endpoint}/{oss_video_url}
+    oss_video_url = Column(String(1024), comment="OSS视频相对路径(key,不含域名)")
+    oss_audio_url = Column(String(1024), comment="OSS音频相对路径(key,不含域名,mp3格式)")
     
     # 状态和错误（使用String类型避免枚举验证问题）
     status = Column(

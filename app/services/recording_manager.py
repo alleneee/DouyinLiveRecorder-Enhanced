@@ -48,7 +48,8 @@ class RecordingManager:
     def __init__(self):
         self.monitor_threads: Dict[int, threading.Thread] = {}
         self.recording_threads: Dict[int, threading.Thread] = {}
-        self.stop_flags: Dict[int, threading.Event] = {}
+        self.stop_flags: Dict[int, threading.Event] = {}  # 监听线程停止标志
+        self.recording_stop_flags: Dict[int, threading.Event] = {}  # 录制线程停止标志
         self.lock = threading.Lock()
 
     def start_monitor(self, room_id: int):
@@ -87,9 +88,60 @@ class RecordingManager:
                 if room_id in self.recording_threads:
                     del self.recording_threads[room_id]
 
+    def stop_recording_manually(self, room_id: int):
+        """手动停止录制并停止监听
+        
+        适用场景:
+        1. 用户手动停止 - 暂时不需要监控了
+        2. 直播关播 - 继续监听也没意义
+        
+        下次需要录制时,会手动触发开播检测再决定是否开始
+        """
+        with self.lock:
+            stopped_recording = False
+            stopped_monitor = False
+            
+            # 1. 停止录制线程
+            if room_id in self.recording_stop_flags:
+                logger.info(f"发送录制停止信号: room_id={room_id}")
+                self.recording_stop_flags[room_id].set()
+                stopped_recording = True
+            
+            # 2. 停止监听线程
+            if room_id in self.stop_flags:
+                logger.info(f"发送监听停止信号: room_id={room_id}")
+                self.stop_flags[room_id].set()
+                
+                # 等待监听线程结束
+                if room_id in self.monitor_threads:
+                    self.monitor_threads[room_id].join(timeout=5)
+                    del self.monitor_threads[room_id]
+                
+                del self.stop_flags[room_id]
+                stopped_monitor = True
+            
+            # 3. 清理录制线程引用
+            if room_id in self.recording_threads:
+                del self.recording_threads[room_id]
+            
+            if stopped_recording or stopped_monitor:
+                logger.info(
+                    f"停止完成: room_id={room_id}, "
+                    f"录制={'已停止' if stopped_recording else '未运行'}, "
+                    f"监听={'已停止' if stopped_monitor else '未运行'}"
+                )
+                return True
+            else:
+                logger.warning(f"录制和监听线程均不存在: room_id={room_id}")
+                return False
+
     def _monitor_worker(self, room_id: int, stop_event: threading.Event):
         """监听工作线程"""
         db = SessionLocal()
+        
+        # 缓存用于日志的属性,避免会话关闭后访问
+        platform = None
+        platform_room_id = None
 
         try:
             # 先获取房间信息用于日志
@@ -98,7 +150,11 @@ class RecordingManager:
                 logger.warning(f"直播间不存在,退出监听: db_id={room_id}")
                 return
 
-            log_ctx = _make_log_context(room.platform, room.platform_room_id)
+            # 缓存属性
+            platform = room.platform
+            platform_room_id = room.platform_room_id
+            
+            log_ctx = _make_log_context(platform, platform_room_id)
             logger.info(f"{log_ctx} 监听线程启动")
 
             while not stop_event.is_set():
@@ -120,14 +176,18 @@ class RecordingManager:
                     if is_live and old_status != LiveStatus.LIVE:
                         logger.info(f"{log_ctx} 检测到开播, url={room.url}")
 
-                        # 提前生成并设置 session_id,避免竞态条件
+                        # 优先使用外部传入的 session_id, 如无则生成新的
+                        session_id = room.current_session_id or str(uuid.uuid4())
+                        session_started_at = room.current_session_started_at or datetime.now()
+
+                        # 如果数据库中缺少这些字段,补充写入
                         if not room.current_session_id:
-                            session_id = str(uuid.uuid4())
-                            session_started_at = datetime.now()
                             room.current_session_id = session_id
+                        if not room.current_session_started_at:
                             room.current_session_started_at = session_started_at
-                            db.commit()
-                            logger.info(f"{log_ctx} 预创建 session: {session_id[:8]}")
+
+                        db.commit()
+                        logger.info(f"{log_ctx} 激活session: {session_id[:8]}")
 
                         self._start_recording(db, room)
                     elif not is_live and old_status == LiveStatus.LIVE:
@@ -142,8 +202,8 @@ class RecordingManager:
                 stop_event.wait(settings.check_interval)
         finally:
             db.close()
-            if room:
-                log_ctx = _make_log_context(room.platform, room.platform_room_id)
+            if platform and platform_room_id:
+                log_ctx = _make_log_context(platform, platform_room_id)
                 logger.info(f"{log_ctx} 监听线程退出")
             else:
                 logger.info(f"监听线程退出: db_id={room_id}")
@@ -179,10 +239,15 @@ class RecordingManager:
         log_ctx = _make_log_context(room.platform, room.platform_room_id, session_id)
         logger.info(f"{log_ctx} 启动录制任务, room_id={room.id}")
 
+        # 创建录制停止事件
+        with self.lock:
+            recording_stop_event = threading.Event()
+            self.recording_stop_flags[room.id] = recording_stop_event
+
         # 启动录制线程
         thread = threading.Thread(
             target=self._recording_worker,
-            args=(session_id, room.id),
+            args=(session_id, room.id, recording_stop_event),
             daemon=True,
             name=f"Record-Session-{session_id[:8]}"
         )
@@ -212,12 +277,16 @@ class RecordingManager:
 
             logger.info(f"{log_ctx} 会话临时统计: 总分片数={segment_count} (可能还有分片在上传中)")
 
-        # 清空当前会话信息,下次激活录制时会生成新的 session_id
-        room.current_session_id = None
-        room.current_session_started_at = None
+        # 不清空session信息,保留最后一次会话用于追溯
+        # 下次激活录制时会自动生成新的session_id并覆盖这些字段
         room.record_status = RecordStatus.PENDING
         db.commit()
-        
+
+        # 清理录制停止事件
+        with self.lock:
+            if room.id in self.recording_stop_flags:
+                del self.recording_stop_flags[room.id]
+
         if stopped_session_id:
             log_ctx = _make_log_context(room.platform, room.platform_room_id, stopped_session_id)
             logger.info(f"{log_ctx} session 已结束,等待新的激活")
@@ -225,7 +294,7 @@ class RecordingManager:
             log_ctx = _make_log_context(room.platform, room.platform_room_id)
             logger.info(f"{log_ctx} 停止录制完成")
 
-    def _recording_worker(self, session_id: str, room_id: int):
+    def _recording_worker(self, session_id: str, room_id: int, stop_event: threading.Event):
         """录制工作线程"""
         db = SessionLocal()
         
@@ -295,11 +364,21 @@ class RecordingManager:
 
                 # 持续监控:FFmpeg进程 + 文件系统
                 while ffmpeg_process.poll() is None:
+                    # 优先检查停止事件(即时响应)
+                    if stop_event.is_set():
+                        manually_stopped = True
+                        logger.info(f"{log_ctx} 收到停止信号,终止录制")
+                        ffmpeg_process.terminate()
+                        break
+
+                    # 强制从数据库重新加载最新状态,避免缓存问题
+                    db.expire(room)
                     db.refresh(room)
 
-                    # 检查:直播结束 或 用户手动停止
-                    if room.live_status != LiveStatus.LIVE or room.record_status == RecordStatus.FINISHED:
-                        manually_stopped = True  # 标记为手动停止
+                    # 检查:直播结束
+                    if room.live_status != LiveStatus.LIVE:
+                        manually_stopped = True
+                        logger.info(f"{log_ctx} 直播已结束,停止录制")
                         ffmpeg_process.terminate()
                         break
 
@@ -366,7 +445,7 @@ class RecordingManager:
                     time.sleep(5)  # 每5秒检查一次
 
                 # FFmpeg进程结束后,处理剩余的文件
-                stdout, stderr = ffmpeg_process.communicate(timeout=5)
+                _, stderr = ffmpeg_process.communicate(timeout=5)
                 return_code = ffmpeg_process.returncode
 
                 # 判断是否为正常终止
@@ -576,8 +655,8 @@ class RecordingManager:
                 raise Exception("音频抽取失败")
 
             # 2. 并行上传
-            video_url = None
-            audio_url = None
+            video_key = None
+            audio_key = None
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 # 传入日志上下文到OSS上传
@@ -585,27 +664,27 @@ class RecordingManager:
                 audio_future = executor.submit(oss_uploader.upload_file, audio_path, None, None, False, log_ctx)
 
                 video_result = video_future.result()
-                video_url = video_result.get('url')
+                video_key = video_result.get('key')  # 获取相对路径key而非完整URL
 
                 audio_result = audio_future.result()
-                audio_url = audio_result.get('url')
+                audio_key = audio_result.get('key')  # 获取相对路径key而非完整URL
 
-            # 3. 回写数据库
-            video_segment.oss_video_url = video_url
-            video_segment.oss_audio_url = audio_url
+            # 3. 回写数据库 (存储相对路径key,不包含域名前缀)
+            video_segment.oss_video_url = video_key
+            video_segment.oss_audio_url = audio_key
             video_segment.status = SegmentStatus.UPLOADED
             db.commit()
 
             # 4. 检查是否是最后一个分片,更新 room 表统计信息
             self._update_session_completion_if_needed(db, video_segment)
 
-            # 5. 发送分片完成通知
-            try:
-                from app.services.segment_notifier import segment_notifier
-                segment_notifier.send_notification_sync(db, segment_id)
-            except Exception as notify_error:
-                logger.error(f"{log_ctx} 发送分片通知失败: {notify_error}", exc_info=True)
-                # 通知失败不影响主流程
+            # 5. 发送分片完成通知 (暂时注释,等待第三方接口提供)
+            # try:
+            #     from app.services.segment_notifier import segment_notifier
+            #     segment_notifier.send_notification_sync(db, segment_id)
+            # except Exception as notify_error:
+            #     logger.error(f"{log_ctx} 发送分片通知失败: {notify_error}", exc_info=True)
+            #     # 通知失败不影响主流程
 
             # 6. 删除本地文件
             if os.path.exists(video_path):

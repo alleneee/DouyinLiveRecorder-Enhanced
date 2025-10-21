@@ -13,6 +13,7 @@ class LiveRoomBase(BaseModel):
     auto_record: Optional[bool] = Field(False, description="是否自动录制")
     remark: Optional[str] = Field(None, description="备注")
     session_id: Optional[str] = Field(None, description="当前会话ID")
+    current_session_started_at: Optional[datetime] = Field(None, description="当前会话开始时间")
 
 
 class LiveRoomCreate(LiveRoomBase):
@@ -32,14 +33,16 @@ class LiveRoomUpdate(BaseModel):
 
 class LiveRoomResponse(BaseModel):
     """直播间响应 - 简化版（匹配简化后的模型）"""
+    model_config = {"from_attributes": True}
+    
     id: int
     
     # 基础信息
     url: str
     platform: str
-    platform_room_id: Optional[str]
-    streamer_name: Optional[str]
-    room_title: Optional[str]
+    platform_room_id: Optional[str] = None
+    streamer_name: Optional[str] = None
+    room_title: Optional[str] = None
     
     # 录制配置
     quality: str
@@ -51,17 +54,14 @@ class LiveRoomResponse(BaseModel):
     record_status: str
     
     # 当前会话信息
-    current_session_id: Optional[str]
-    current_session_started_at: Optional[datetime]
+    current_session_id: Optional[str] = None
+    current_session_started_at: Optional[datetime] = None
     
     # 时间戳
     created_at: datetime
     updated_at: datetime
     
-    remark: Optional[str]
-    
-    class Config:
-        from_attributes = True
+    remark: Optional[str] = None
 
 
 class LiveRoomListResponse(BaseModel):

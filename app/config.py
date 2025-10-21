@@ -69,7 +69,22 @@ class Settings(BaseSettings):
     oss_auto_delete_local: bool = Field(False, description="上传后是否删除本地文件")
 
     # 分片通知配置
-    segment_notification_url: str = Field("", description="分片上传完成后通知的目标URL(留空则不发送通知)")
+    segment_notification_base_url: str = Field("", description="分片通知服务的基础URL(如: http://api.example.com)")
+    
+    @property
+    def segment_notification_url(self) -> str:
+        """构建完整的分片通知URL
+        
+        Returns:
+            完整URL: {base_url}/shard/plain
+            如果base_url为空,返回空字符串
+        """
+        if not self.segment_notification_base_url:
+            return ""
+        
+        # 去除base_url末尾的斜杠,统一拼接格式
+        base = self.segment_notification_base_url.rstrip('/')
+        return f"{base}/shard/plain"
 
 
 settings = Settings()

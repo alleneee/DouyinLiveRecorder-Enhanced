@@ -237,7 +237,8 @@ class LiveRoomService:
             remark=room_data.remark,
             record_status=RecordStatus.PENDING,
             live_status=LiveStatus.UNKNOWN,
-            current_session_id=room_data.session_id
+            current_session_id=room_data.session_id,
+            current_session_started_at=room_data.current_session_started_at
         )
         
         db.add(db_room)

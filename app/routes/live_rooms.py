@@ -453,21 +453,39 @@ async def stop_recording(
         }
     )
 
-    # 设置状态为FINISHED，录制线程会检测到并自动停止
-    room.record_status = RecordStatus.FINISHED
-    await db.commit()
-    await db.refresh(room)
+    # 直接通知录制线程停止(即时响应)
+    from app.services.recording_manager import recording_manager
+    stopped = recording_manager.stop_recording_manually(room.id)
 
-    logger.info(
-        "录制已停止",
-        extra={
-            "db_id": room.id,
-            "platform": room.platform,
-            "platform_room_id": room.platform_room_id
-        }
-    )
+    if stopped:
+        # 设置状态为FINISHED
+        room.record_status = RecordStatus.FINISHED
+        await db.commit()
+        await db.refresh(room)
 
-    return StopRecordingResponse(success=True)
+        logger.info(
+            "录制已停止",
+            extra={
+                "db_id": room.id,
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id
+            }
+        )
+        return StopRecordingResponse(success=True)
+    else:
+        # 录制线程不存在,但仍更新状态
+        room.record_status = RecordStatus.FINISHED
+        await db.commit()
+
+        logger.warning(
+            "录制线程不存在,已更新状态",
+            extra={
+                "db_id": room.id,
+                "platform": room.platform,
+                "platform_room_id": room.platform_room_id
+            }
+        )
+        return StopRecordingResponse(success=True)
 
 
 @router.get(

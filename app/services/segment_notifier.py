@@ -9,7 +9,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models.video_segment import VideoSegment
-from app.models.live_room import LiveRoom
+from app.models.live_room import LiveRoom, RecordStatus
 from app.schemas.segment_notification import (
     SegmentNotificationRequest,
     LiveInfo,
@@ -29,15 +29,18 @@ class SegmentNotifier:
         初始化通知服务
 
         Args:
-            notification_url: 通知目标URL,默认从环境变量读取
+            notification_url: 通知目标URL,默认从环境变量动态拼接
             timeout: HTTP请求超时时间(秒)
         """
-        self.notification_url = notification_url or getattr(settings, 'SEGMENT_NOTIFICATION_URL', '')
+        # 优先使用传入的URL,否则使用配置的动态拼接URL
+        self.notification_url = notification_url or settings.segment_notification_url
         self.timeout = timeout
         self.enabled = bool(self.notification_url)
 
         if not self.enabled:
-            logger.info("分片通知服务未启用(SEGMENT_NOTIFICATION_URL未配置)")
+            logger.info("分片通知服务未启用(segment_notification_base_url未配置)")
+        else:
+            logger.info(f"分片通知服务已启用: {self.notification_url}")
 
     def format_datetime_to_iso(self, dt: datetime) -> str:
         """
@@ -50,6 +53,25 @@ class SegmentNotifier:
             ISO格式的时间字符串 (YYYY-MM-DDTHH:MM:SS)
         """
         return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+    def build_full_url(self, oss_key: Optional[str]) -> str:
+        """
+        将OSS相对路径key拼接为完整URL
+
+        Args:
+            oss_key: OSS对象键(相对路径)
+                    例如: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+
+        Returns:
+            完整的访问URL
+            例如: https://ts-bigdata-chart-prd.oss-cn-beijing.aliyuncs.com/live-recorder/prod/抖音/296728101980/20251021/48/video.ts
+            如果oss_key为空,返回空字符串
+        """
+        if not oss_key:
+            return ""
+        
+        # 拼接完整URL: https://{bucket}.{endpoint}/{key}
+        return f"https://{settings.oss_bucket_name}.{settings.oss_endpoint}/{oss_key}"
 
     def build_notification_data(
         self,
@@ -87,7 +109,22 @@ class SegmentNotifier:
                 logger.error(f"分片结束时间无法确定: segment_id={segment.id}")
                 return None
 
-            # 构建请求数据,直接使用数据库中的绝对时间
+            # 判断是否为最后一个片段
+            # 查询该session的最大segment_index
+            from sqlalchemy import func
+            max_segment_index = db.query(func.max(VideoSegment.segment_index)).filter(
+                VideoSegment.session_id == segment.session_id
+            ).scalar()
+
+            # 判断当前片段是否为最大索引 且 该session的录制已停止
+            is_last_segment = (
+                max_segment_index is not None and
+                segment.segment_index == max_segment_index and
+                room.record_status != RecordStatus.RECORDING
+            )
+
+            # 构建请求数据,拼接完整OSS URL发送给第三方
+            # 注意: 数据库存储的是相对路径key,发送通知时需拼接完整URL
             notification = SegmentNotificationRequest(
                 live_info=LiveInfo(
                     live_id=room.current_session_id,
@@ -95,12 +132,13 @@ class SegmentNotifier:
                     live_name=room.streamer_name
                 ),
                 sub_video_info=SubVideoInfo(
-                    video_url=segment.oss_video_url or "",
-                    audio_url=segment.oss_audio_url or "",
+                    video_url=self.build_full_url(segment.oss_video_url),
+                    audio_url=self.build_full_url(segment.oss_audio_url),
                     duration=segment.duration or 0,
                     absolute_start_time=self.format_datetime_to_iso(segment.segment_started_at),
                     absolute_end_time=self.format_datetime_to_iso(end_time),
-                    serial_num=segment.segment_index or 0
+                    serial_num=segment.segment_index or 0,
+                    last_segment_flag=is_last_segment
                 ),
                 video_shard_info=[]  # 当前版本为空,预留扩展
             )

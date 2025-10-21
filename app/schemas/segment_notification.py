@@ -21,6 +21,7 @@ class SubVideoInfo(BaseModel):
     absolute_start_time: str = Field(..., description="分片开始时间(ISO格式)")
     absolute_end_time: str = Field(..., description="分片结束时间(ISO格式)")
     serial_num: int = Field(..., description="视频序号")
+    last_segment_flag: bool = Field(False, description="最后一次片段标识")
 
 
 class VideoShardInfo(BaseModel):
@@ -49,7 +50,8 @@ class SegmentNotificationRequest(BaseModel):
                     "duration": 60,
                     "absolute_start_time": "2025-01-20T10:30:00",
                     "absolute_end_time": "2025-01-20T10:31:00",
-                    "serial_num": 0
+                    "serial_num": 0,
+                    "last_segment_flag": False
                 }
             }
         }
