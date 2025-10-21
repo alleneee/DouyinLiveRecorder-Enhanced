@@ -37,14 +37,113 @@ class URLParser:
         ],
         '小红书': [
             (r'xiaohongshu\.com/user/profile/(\w+)', '小红书'),
-            (r'xhslink\.com/(\w+)', '小红书'),
+            (r'xhslink\.com/[^/]*?/(\w+)', '小红书'),  # 短链格式: xhslink.com/a/xxx
         ],
         'TikTok': [
             (r'tiktok\.com/@([^/\?]+)', 'TikTok'),
+            (r'vm\.tiktok\.com/(\w+)', 'TikTok'),
         ],
         'Bigo': [
-            (r'bigo\.tv/([^/\?]+)', 'Bigo'),
+            (r'bigo\.tv/([^?\s]+)', 'Bigo'),  # 匹配完整路径,包含斜杠
             (r'slink\.bigovideo\.tv/(\w+)', 'Bigo'),
+        ],
+        'Blued': [
+            (r'blued\.cn/live/(\w+)', 'Blued'),
+        ],
+        'AfreecaTV': [
+            (r'play\.afreecatv\.com/([^/\?]+)', 'AfreecaTV'),
+            (r'afreecatv\.com/([^/\?]+)', 'AfreecaTV'),
+            (r'soop\.tv/([^/\?]+)', 'AfreecaTV'),  # 原AfreecaTV现SOOP
+        ],
+        '千度热播': [
+            (r'qiandurebo\.com/web/video\.php\?roomnumber=(\d+)', '千度热播'),
+        ],
+        '网易CC': [
+            (r'cc\.163\.com/([^/\?]+)', '网易CC'),
+        ],
+        'PandaTV': [
+            (r'panda\.tv/([^/\?]+)', 'PandaTV'),
+        ],
+        '猫耳FM': [
+            (r'fm\.missevan\.com/live/(\d+)', '猫耳FM'),
+        ],
+        'Look直播': [
+            (r'look\.163\.com/live/room/(\d+)', 'Look直播'),
+        ],
+        'WinkTV': [
+            (r'winktv\.co\.kr/live/play/(\w+)', 'WinkTV'),
+        ],
+        'FlexTV': [
+            (r'flextv\.co\.kr/channels/(\d+)', 'FlexTV'),
+            (r'ttinglive\.com/broadcast/(\w+)', 'FlexTV'),  # 原Flextv现TTingLive
+        ],
+        'PopkonTV': [
+            (r'popkontv\.com/(\w+)', 'PopkonTV'),
+        ],
+        'TwitCasting': [
+            (r'twitcasting\.tv/([^/\?]+)', 'TwitCasting'),
+        ],
+        '百度直播': [
+            (r'live\.baidu\.com/(\w+)', '百度直播'),
+        ],
+        '微博直播': [
+            (r'weibo\.com/l/wblive/p/show/(\w+)', '微博直播'),
+        ],
+        '酷狗直播': [
+            (r'fanxing\.kugou\.com/(\d+)', '酷狗直播'),
+        ],
+        'TwitchTV': [
+            (r'twitch\.tv/([^/\?]+)', 'TwitchTV'),
+        ],
+        'LiveMe': [
+            (r'liveme\.com/live\.html\?videoid=(\w+)', 'LiveMe'),
+        ],
+        '花椒直播': [
+            (r'huajiao\.com/l/(\d+)', '花椒直播'),
+        ],
+        '流星直播': [
+            (r'liuxing\.com/(\w+)', '流星直播'),
+        ],
+        'ShowRoom': [
+            (r'showroom-live\.com/r/(\w+)', 'ShowRoom'),
+        ],
+        'Acfun': [
+            (r'live\.acfun\.cn/live/(\d+)', 'Acfun'),
+        ],
+        '映客直播': [
+            (r'inke\.cn/live\.html\?uid=(\d+)', '映客直播'),
+        ],
+        '知乎直播': [
+            (r'zhihu\.com/theater/(\d+)', '知乎直播'),
+        ],
+        'CHZZK': [
+            (r'chzzk\.naver\.com/live/(\w+)', 'CHZZK'),
+        ],
+        '17Live': [
+            (r'17\.live/live/(\d+)', '17Live'),
+        ],
+        '六间房': [
+            (r'6\.cn/show/(\w+)', '六间房'),
+        ],
+        'Shopee': [
+            (r'shopee\..*?/live/(\w+)', 'Shopee'),
+        ],
+        'YouTube': [
+            (r'youtube\.com/watch\?v=([^&\?]+)', 'YouTube'),
+            (r'youtu\.be/([^/\?]+)', 'YouTube'),
+            (r'youtube\.com/live/([^/\?]+)', 'YouTube'),
+        ],
+        '淘宝直播': [
+            (r'taobao\.com.*?liveId=(\d+)', '淘宝直播'),
+        ],
+        '京东直播': [
+            (r'jd\.com.*?id=(\d+)', '京东直播'),
+        ],
+        'Faceit': [
+            (r'faceit\.com/.*?/room/([^/\?]+)', 'Faceit'),
+        ],
+        'Picarto': [
+            (r'picarto\.tv/([^/\?]+)', 'Picarto'),
         ],
     }
 

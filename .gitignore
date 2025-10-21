@@ -167,3 +167,7 @@ cython_debug/
 backup_config/
 
 .serena/
+
+.windsurf/
+
+.claude/
