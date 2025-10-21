@@ -1,4 +1,8 @@
-"""异步数据库配置 - 仅支持 MySQL"""
+"""异步数据库配置 - 仅支持 MySQL
+
+提供异步数据库引擎、会话工厂和初始化函数。
+依赖注入函数 get_db() 位于 dependencies.py 中。
+"""
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from app.database import Base  # 导入已有的Base
 from app.config import settings
@@ -34,31 +38,6 @@ AsyncSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False
 )
-
-
-async def get_async_db() -> AsyncSession:
-    """获取异步数据库会话
-    
-    用于FastAPI的依赖注入。
-    
-    Yields:
-        AsyncSession: 异步数据库会话
-        
-    Examples:
-        >>> @router.get("/items")
-        >>> async def read_items(db: AsyncSession = Depends(get_async_db)):
-        >>>     result = await db.execute(select(Item))
-        >>>     return result.scalars().all()
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
 
 
 async def init_async_db():

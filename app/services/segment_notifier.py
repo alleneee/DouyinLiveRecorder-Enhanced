@@ -137,10 +137,13 @@ class SegmentNotifier:
                 logger.error(f"视频分片不存在: segment_id={segment_id}")
                 return False
 
+            # 构建业务日志上下文
+            log_ctx = f"[{segment.platform} | {segment.platform_room_id} | {segment.session_id[:8]} | seg{segment.segment_index}]"
+
             # 检查是否已上传完成
             if not segment.oss_video_url or not segment.oss_audio_url:
                 logger.warning(
-                    f"分片尚未上传完成,跳过通知: segment_id={segment_id}, "
+                    f"{log_ctx} 分片尚未上传完成,跳过通知: "
                     f"video={bool(segment.oss_video_url)}, audio={bool(segment.oss_audio_url)}"
                 )
                 return False
@@ -161,21 +164,22 @@ class SegmentNotifier:
                 response.raise_for_status()
 
                 logger.info(
-                    f"分片通知发送成功: segment_id={segment_id}, "
+                    f"{log_ctx} 分片通知发送成功: "
                     f"status={response.status_code}, url={self.notification_url}"
                 )
                 return True
 
         except httpx.HTTPError as e:
             logger.error(
-                f"分片通知发送失败(HTTP错误): segment_id={segment_id}, "
-                f"error={e}, url={self.notification_url}",
+                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败(HTTP错误): "
+                f"segment_id={segment_id}, error={e}, url={self.notification_url}",
                 exc_info=True
             )
             return False
         except Exception as e:
             logger.error(
-                f"分片通知发送失败: segment_id={segment_id}, error={e}",
+                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败: "
+                f"segment_id={segment_id}, error={e}",
                 exc_info=True
             )
             return False
@@ -206,10 +210,13 @@ class SegmentNotifier:
                 logger.error(f"视频分片不存在: segment_id={segment_id}")
                 return False
 
+            # 构建业务日志上下文
+            log_ctx = f"[{segment.platform} | {segment.platform_room_id} | {segment.session_id[:8]} | seg{segment.segment_index}]"
+
             # 检查是否已上传完成
             if not segment.oss_video_url or not segment.oss_audio_url:
                 logger.warning(
-                    f"分片尚未上传完成,跳过通知: segment_id={segment_id}, "
+                    f"{log_ctx} 分片尚未上传完成,跳过通知: "
                     f"video={bool(segment.oss_video_url)}, audio={bool(segment.oss_audio_url)}"
                 )
                 return False
@@ -230,21 +237,22 @@ class SegmentNotifier:
                 response.raise_for_status()
 
                 logger.info(
-                    f"分片通知发送成功: segment_id={segment_id}, "
+                    f"{log_ctx} 分片通知发送成功: "
                     f"status={response.status_code}, url={self.notification_url}"
                 )
                 return True
 
         except httpx.HTTPError as e:
             logger.error(
-                f"分片通知发送失败(HTTP错误): segment_id={segment_id}, "
-                f"error={e}, url={self.notification_url}",
+                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败(HTTP错误): "
+                f"segment_id={segment_id}, error={e}, url={self.notification_url}",
                 exc_info=True
             )
             return False
         except Exception as e:
             logger.error(
-                f"分片通知发送失败: segment_id={segment_id}, error={e}",
+                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败: "
+                f"segment_id={segment_id}, error={e}",
                 exc_info=True
             )
             return False

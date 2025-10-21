@@ -1,5 +1,6 @@
 """阿里云OSS上传服务 - 支持分片上传和断点续传"""
 import os
+import re
 import hashlib
 from datetime import datetime
 from typing import Dict, Optional, Callable
@@ -121,10 +122,11 @@ class AliyunOSSUploader:
         
         Args:
             file_path: 本地文件路径
-            object_key: OSS对象键,默认使用日期/文件名格式
+            object_key: OSS对象键,默认自动生成带业务信息的路径
             progress_callback: 进度回调函数 callback(current_bytes, total_bytes)
             force_multipart: 是否强制使用分片上传
             log_context: 日志上下文前缀,格式如 "[抖音 | 296728101980 | c840ef38 | seg48]"
+                        用于自动解析平台、直播间ID、分片索引等业务信息
             
         Returns:
             上传结果字典:
@@ -143,19 +145,23 @@ class AliyunOSSUploader:
             Exception: 上传失败
             
         Examples:
-            >>> # 普通上传
+            >>> # 普通上传（最简路径）
             >>> result = uploader.upload_file("/path/to/small.ts")
-            
+            >>> # 生成路径: live-recorder/20251021/small.ts
+
             >>> # 带进度回调
             >>> def callback(current, total):
             ...     print(f"进度: {current}/{total} ({current/total*100:.1f}%)")
             >>> result = uploader.upload_file("/path/to/large.ts", progress_callback=callback)
-            
-            >>> # 带业务上下文
+
+            >>> # 带业务上下文（完整路径）
             >>> result = uploader.upload_file(
             ...     "/path/to/video.ts",
             ...     log_context="[抖音 | 296728101980 | c840ef38 | seg48]"
             ... )
+            >>> # 生成路径: live-recorder/抖音/296728101980/20251021/seg48/video.ts
+            >>> print(result['url'])
+            >>> # https://bucket.oss-cn-beijing.aliyuncs.com/live-recorder/抖音/296728101980/20251021/seg48/video.ts
         """
         if not settings.oss_enabled or not self.bucket:
             raise RuntimeError("OSS未启用或客户端未初始化")
@@ -164,10 +170,28 @@ class AliyunOSSUploader:
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
-        
+
+        # 解析log_context获取业务信息
+        platform = None
+        platform_room_id = None
+        segment_index = None
+
+        if log_context:
+            # log_context格式: "[抖音 | 296728101980 | c840ef38 | seg48]"
+            match = re.search(r'\[([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*seg(\d+)\]', log_context)
+            if match:
+                platform = match.group(1).strip()
+                platform_room_id = match.group(2).strip()
+                segment_index = int(match.group(4))
+
         # 生成object_key
         if not object_key:
-            object_key = self._generate_object_key(file_path.name)
+            object_key = self._generate_object_key(
+                file_path.name,
+                platform=platform,
+                platform_room_id=platform_room_id,
+                segment_index=segment_index
+            )
         
         # 获取文件大小
         file_size = file_path.stat().st_size
@@ -335,19 +359,59 @@ class AliyunOSSUploader:
                 pass
             raise
     
-    def _generate_object_key(self, filename: str) -> str:
+    def _generate_object_key(
+        self, 
+        filename: str,
+        platform: Optional[str] = None,
+        platform_room_id: Optional[str] = None,
+        segment_index: Optional[int] = None
+    ) -> str:
         """生成OSS对象键
         
-        格式: YYYYMMDD/filename
+        格式: live-recorder/{platform}/{platform_room_id}/{YYYYMMDD}/seg{segment_index}/{filename}
         
         Args:
             filename: 文件名
+            platform: 平台名称（如"抖音"）
+            platform_room_id: 平台直播间ID
+            segment_index: 分片索引
             
         Returns:
             对象键字符串
+            
+        Examples:
+            >>> # 完整路径
+            >>> key = uploader._generate_object_key("video.ts", "抖音", "296728101980", 48)
+            >>> # live-recorder/抖音/296728101980/20251021/seg48/video.ts
+            
+            >>> # 最简路径（缺少业务信息时）
+            >>> key = uploader._generate_object_key("video.ts")
+            >>> # live-recorder/20251021/video.ts
         """
         date_prefix = datetime.now().strftime("%Y%m%d")
-        return f"{date_prefix}/{filename}"
+        
+        # 构建路径组件
+        path_parts = ["live-recorder"]
+        
+        # 添加平台信息
+        if platform:
+            path_parts.append(platform)
+        
+        # 添加直播间ID
+        if platform_room_id:
+            path_parts.append(platform_room_id)
+        
+        # 添加日期
+        path_parts.append(date_prefix)
+        
+        # 添加分片索引
+        if segment_index is not None:
+            path_parts.append(f"seg{segment_index}")
+        
+        # 添加文件名
+        path_parts.append(filename)
+        
+        return "/".join(path_parts)
     
     def _generate_url(self, object_key: str) -> str:
         """生成访问URL

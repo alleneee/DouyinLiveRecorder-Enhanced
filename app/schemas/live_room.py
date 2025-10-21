@@ -109,9 +109,11 @@ class ActivateRecordingRequest(BaseModel):
 
 
 class StopRecordingRequest(BaseModel):
-    """停止录制请求"""
+    """停止录制请求
+
+    只需要提供直播间URL,系统会自动停止当前正在进行的录制任务
+    """
     url: str = Field(..., description="直播间URL", example="https://live.douyin.com/296728101980")
-    session_id : str = Field(..., description="录制会话ID(由外部系统提供)", example="2025011721812")
 
 
 class StopRecordingResponse(BaseModel):

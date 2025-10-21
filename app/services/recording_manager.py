@@ -15,9 +15,19 @@ from app.config import settings
 
 
 
-def _make_log_context(platform: str = None, platform_room_id: str = None, 
-                      session_id: str = None, segment_id: int = None) -> str:
-    """创建统一的日志上下文标识"""
+def _make_log_context(platform: str = None, platform_room_id: str = None,
+                      session_id: str = None, segment_index: int = None) -> str:
+    """创建统一的日志上下文标识
+
+    Args:
+        platform: 平台名称 (如 "抖音")
+        platform_room_id: 平台直播间ID
+        session_id: 录制会话ID (只取前8位)
+        segment_index: 分片序号 (注意是segment_index,不是segment_id)
+
+    Returns:
+        格式化的日志上下文,如 "[抖音 | 296728101980 | c840ef38 | seg48]"
+    """
     parts = []
     if platform:
         parts.append(platform)
@@ -26,9 +36,9 @@ def _make_log_context(platform: str = None, platform_room_id: str = None,
     if session_id:
         # 只取session_id的前8位
         parts.append(session_id[:8] if len(session_id) > 8 else session_id)
-    if segment_id:
-        parts.append(f"seg{segment_id}")
-    
+    if segment_index is not None:  # 使用 is not None 以支持 segment_index=0
+        parts.append(f"seg{segment_index}")
+
     return f"[{' | '.join(parts)}]" if parts else ""
 
 
@@ -435,8 +445,6 @@ class RecordingManager:
             if not room:
                 return
 
-            log_ctx = _make_log_context(room.platform, room.platform_room_id, session_id)
-
             # 创建切片记录(包含平台冗余字段)
             video_segment = VideoSegment(
                 room_id=room_id,
@@ -454,7 +462,9 @@ class RecordingManager:
             db.commit()
             db.refresh(video_segment)
 
-            seg_ctx = _make_log_context(room.platform, room.platform_room_id, session_id, video_segment.id)
+            # 使用包含 segment_index 的日志上下文
+            seg_ctx = _make_log_context(room.platform, room.platform_room_id, session_id, segment_index)
+            logger.info(f"{seg_ctx} 分片创建成功, 时长={duration}秒, 文件={os.path.basename(file_path)}")
 
             # 异步上传视频和音频
             threading.Thread(
@@ -463,9 +473,16 @@ class RecordingManager:
                 daemon=True
             ).start()
         except Exception as e:
-            logger.error(f"{log_ctx} 切片记录创建失败: {e}")
+            # 在异常时也使用带 segment_index 的上下文(如果可用)
+            error_ctx = _make_log_context(
+                room.platform if room else None,
+                room.platform_room_id if room else None,
+                session_id,
+                segment_index
+            )
+            logger.error(f"{error_ctx} 切片记录创建失败: {e}")
             import traceback
-            logger.error(f"{log_ctx} 异常堆栈: {traceback.format_exc()}")
+            logger.error(f"{error_ctx} 异常堆栈: {traceback.format_exc()}")
 
     def _update_session_completion_if_needed(self, db: Session, video_segment: VideoSegment):
         """检查并更新 session 完成信息
@@ -540,13 +557,15 @@ class RecordingManager:
 
         db = SessionLocal()
         audio_path = None
-        log_ctx = _make_log_context(platform, platform_room_id, session_id, segment_id)
 
         try:
             video_segment = db.query(VideoSegment).filter(VideoSegment.id == segment_id).first()
             if not video_segment:
-                logger.warning(f"{log_ctx} 视频分片不存在")
+                logger.warning(f"视频分片不存在: segment_id={segment_id}")
                 return
+
+            # 使用 segment_index 而不是 segment_id 构建日志上下文
+            log_ctx = _make_log_context(platform, platform_room_id, session_id, video_segment.segment_index)
 
             video_segment.status = SegmentStatus.UPLOADING
             db.commit()
