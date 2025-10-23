@@ -35,10 +35,29 @@ class Settings(BaseSettings):
     api_reload: bool = False
     
     # 录制配置
-    segment_duration: int = 60  # 分段时长（秒）
+    segment_duration: int = 300  # 分段时长（秒）- 默认5分钟（测试用）
+    segment_method: str = Field("hls", description="录制分片方式: hls(推荐稳定) / segment(传统模式)")
+    audio_codec_mode: str = Field("copy", description="音频编码模式: copy(直接复制,性能高) / aac(重编码,兼容性好)")
     video_save_type: str = "mp4"  # 最终保存格式 (上传OSS的格式)
     video_record_format: str = "ts"  # 录制时使用的格式 (ts/flv, ts更稳定)
     video_save_path: str = "./downloads"  # 保存路径
+    max_concurrent_recordings: int = Field(5, description="最大并发录制数量（防止资源耗尽）")
+    
+    # FFmpeg编码配置
+    force_keyframe_mode: bool = Field(True, description="强制关键帧模式：确保精确分段但需重新编码视频")
+    ffmpeg_preset: str = Field("ultrafast", description="FFmpeg编码预设（ultrafast/superfast/veryfast/faster/fast/medium）")
+    ffmpeg_crf: int = Field(23, description="FFmpeg质量控制（18-28，越小质量越高但文件越大）")
+    ffmpeg_gop_seconds: int = Field(2, description="GOP间隔（秒），建议2-4秒，越小切片越精确但编码负载越高")
+    ffmpeg_assumed_fps: int = Field(30, description="假设的视频帧率，用于计算GOP大小")
+
+    # 重试机制配置
+    max_retry_attempts: int = Field(3, description="录制失败最大重试次数")
+    retry_delay_seconds: int = Field(10, description="重试间隔（秒）")
+    retry_backoff_multiplier: float = Field(2.0, description="重试延迟倍增因子（指数退避）")
+
+    # 线程池配置
+    monitor_thread_pool_size: int = Field(10, description="监控线程池大小")
+    recording_thread_pool_size: int = Field(5, description="录制线程池大小")
 
     @property
     def ffmpeg_format(self) -> str:
@@ -76,7 +95,7 @@ class Settings(BaseSettings):
         """构建完整的分片通知URL
         
         Returns:
-            完整URL: {base_url}/shard/plain
+            完整URL: {base_url}/shard/plan
             如果base_url为空,返回空字符串
         """
         if not self.segment_notification_base_url:
@@ -84,7 +103,7 @@ class Settings(BaseSettings):
         
         # 去除base_url末尾的斜杠,统一拼接格式
         base = self.segment_notification_base_url.rstrip('/')
-        return f"{base}/shard/plain"
+        return f"{base}/shard/plan"
 
 
 settings = Settings()

@@ -38,9 +38,9 @@ class SegmentNotifier:
         self.enabled = bool(self.notification_url)
 
         if not self.enabled:
-            logger.info("分片通知服务未启用(segment_notification_base_url未配置)")
+            logger.warning("⚠️ 分片通知服务未启用(segment_notification_base_url未配置)")
         else:
-            logger.info(f"分片通知服务已启用: {self.notification_url}")
+            logger.info(f"✅ 分片通知服务已启用: {self.notification_url}")
 
     def format_datetime_to_iso(self, dt: datetime) -> str:
         """
@@ -100,13 +100,51 @@ class SegmentNotifier:
                 logger.error(f"分片开始时间不存在: segment_id={segment.id}")
                 return None
 
-            # 使用segment_ended_at,如果不存在则使用started_at + duration
-            if segment.segment_ended_at:
-                end_time = segment.segment_ended_at
-            elif segment.duration:
-                end_time = segment.segment_started_at + timedelta(seconds=segment.duration)
-            else:
-                logger.error(f"分片结束时间无法确定: segment_id={segment.id}")
+            # 检查录制开始时间
+            if not room.current_session_started_at:
+                logger.error(f"录制开始时间不存在: room_id={segment.room_id}")
+                return None
+
+            # 将HH:MM:SS格式的相对时间转换为绝对时间
+            def parse_time_str(time_str: str) -> int:
+                """解析HH:MM:SS格式，返回总秒数"""
+                try:
+                    if not time_str or not isinstance(time_str, str):
+                        logger.warning(f"时间格式无效: {time_str}")
+                        return 0
+                    parts = time_str.split(':')
+                    if len(parts) != 3:
+                        logger.warning(f"时间格式错误，应为HH:MM:SS: {time_str}")
+                        return 0
+                    hours, minutes, seconds = map(int, parts)
+                    return hours * 3600 + minutes * 60 + seconds
+                except Exception as e:
+                    logger.error(f"解析时间字符串失败: {time_str}, error={e}")
+                    return 0
+            
+            try:
+                start_seconds = parse_time_str(segment.segment_started_at)
+                absolute_start_time = room.current_session_started_at + timedelta(seconds=start_seconds)
+
+                if segment.segment_ended_at:
+                    end_seconds = parse_time_str(segment.segment_ended_at)
+                    absolute_end_time = room.current_session_started_at + timedelta(seconds=end_seconds)
+                else:
+                    logger.error(
+                        f"分片结束时间不存在: segment_id={segment.id}, "
+                        f"started_at={segment.segment_started_at}, "
+                        f"ended_at={segment.segment_ended_at}, "
+                        f"duration={segment.duration}"
+                    )
+                    return None
+            except Exception as e:
+                logger.error(
+                    f"时间转换失败: segment_id={segment.id}, "
+                    f"started_at={segment.segment_started_at}, "
+                    f"ended_at={segment.segment_ended_at}, "
+                    f"error={e}",
+                    exc_info=True
+                )
                 return None
 
             # 判断是否为最后一个片段
@@ -123,30 +161,29 @@ class SegmentNotifier:
                 room.record_status != RecordStatus.RECORDING
             )
 
-            # 构建请求数据,拼接完整OSS URL发送给第三方
-            # 注意: 数据库存储的是相对路径key,发送通知时需拼接完整URL
+            # 构建请求数据，直接使用OSS相对路径key（不拼接完整URL）
+            # 注意: 发送给第三方的是OSS key，例如 live-recorder/test/抖音/296728101980/20251022/0/xxx.mp3
             notification = SegmentNotificationRequest(
                 live_info=LiveInfo(
-                    live_id=room.current_session_id,
+                    live_id=segment.session_id,  
                     live_url=room.url,
                     live_name=room.streamer_name
                 ),
                 sub_video_info=SubVideoInfo(
-                    video_url=self.build_full_url(segment.oss_video_url),
-                    audio_url=self.build_full_url(segment.oss_audio_url),
+                    video_url=segment.oss_video_url,  
+                    audio_url=segment.oss_audio_url,  
                     duration=segment.duration or 0,
-                    absolute_start_time=self.format_datetime_to_iso(segment.segment_started_at),
-                    absolute_end_time=self.format_datetime_to_iso(end_time),
+                    absolute_start_time=self.format_datetime_to_iso(absolute_start_time),
+                    absolute_end_time=self.format_datetime_to_iso(absolute_end_time),
                     serial_num=segment.segment_index or 0,
                     last_segment_flag=is_last_segment
-                ),
-                video_shard_info=[]  # 当前版本为空,预留扩展
+                )
             )
 
             return notification
 
         except Exception as e:
-            logger.error(f"构建通知数据失败: segment_id={segment.id}, error={e}", exc_info=True)
+            logger.error(f"构建通知数据失败: segment_id={segment.id}, error={str(e)}", exc_info=True)
             return None
 
     async def send_notification_async(
@@ -191,32 +228,46 @@ class SegmentNotifier:
             if not notification_data:
                 return False
 
-            # 发送HTTP请求
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    self.notification_url,
-                    json=notification_data.model_dump(),
-                    headers={"Content-Type": "application/json"}
-                )
+            # ✅ 打印发送入参
+            import json
+            request_data = notification_data.model_dump()
+            logger.info(f"通知处理分片: {request_data}")
 
-                response.raise_for_status()
+            # 发送HTTP请求(异步)
+            # 使用aiohttp，解决httpx与服务端的兼容性问题（502错误）
+            import aiohttp
+            
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        self.notification_url,
+                        json=request_data,
+                        headers={'User-Agent': 'DouyinLiveRecorder/1.0'},
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        status = response.status
+                        response_text = await response.text()
+                        
+                        if 200 <= status < 300:
+                            logger.info(
+                                f"{log_ctx} ✅ 分片通知发送成功: "
+                                f"status={status}, response={response_text[:200]}"
+                            )
+                            return True
+                        else:
+                            logger.error(
+                                f"{log_ctx} ❌ 分片通知发送失败: "
+                                f"status={status}, response={response_text[:200]}"
+                            )
+                            return False
+                            
+            except Exception as e:
+                logger.error(f"{log_ctx} 通知发送异常: {e}", exc_info=True)
+                return False
 
-                logger.info(
-                    f"{log_ctx} 分片通知发送成功: "
-                    f"status={response.status_code}, url={self.notification_url}"
-                )
-                return True
-
-        except httpx.HTTPError as e:
-            logger.error(
-                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败(HTTP错误): "
-                f"segment_id={segment_id}, error={e}, url={self.notification_url}",
-                exc_info=True
-            )
-            return False
         except Exception as e:
             logger.error(
-                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败: "
+                f"{log_ctx if 'log_ctx' in locals() else ''} ❌ 分片通知发送失败: "
                 f"segment_id={segment_id}, error={e}",
                 exc_info=True
             )
@@ -229,16 +280,16 @@ class SegmentNotifier:
     ) -> bool:
         """
         同步发送通知(用于线程中调用)
+        采用fire-and-forget模式,发送后立即返回,不等待响应
 
         Args:
             db: 数据库会话
             segment_id: 视频分片ID
 
         Returns:
-            是否发送成功
+            是否成功启动发送任务(不代表HTTP请求成功)
         """
         if not self.enabled:
-            logger.debug(f"通知服务未启用,跳过发送: segment_id={segment_id}")
             return False
 
         try:
@@ -262,34 +313,46 @@ class SegmentNotifier:
             # 构建通知数据
             notification_data = self.build_notification_data(db, segment)
             if not notification_data:
+                logger.error(f"{log_ctx} 构建通知数据失败")
                 return False
 
-            # 发送HTTP请求(同步)
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    self.notification_url,
-                    json=notification_data.model_dump(),
-                    headers={"Content-Type": "application/json"}
-                )
+            # ✅ 打印发送入参后立即返回
+            import json
+            request_data = notification_data.model_dump()
 
-                response.raise_for_status()
-
-                logger.info(
-                    f"{log_ctx} 分片通知发送成功: "
-                    f"status={response.status_code}, url={self.notification_url}"
-                )
-                return True
-
-        except httpx.HTTPError as e:
-            logger.error(
-                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败(HTTP错误): "
-                f"segment_id={segment_id}, error={e}, url={self.notification_url}",
-                exc_info=True
+            logger.info(
+                f"{log_ctx} 📤 分片通知(fire-and-forget):\n"
+                f"  URL: {self.notification_url}\n"
+                f"  入参: {json.dumps(request_data, ensure_ascii=False, indent=2)}"
             )
-            return False
+
+            # 🔥 Fire-and-forget: 启动后台线程发送,立即返回
+            import threading
+            import requests
+
+            def _send_in_background():
+                """后台线程发送HTTP请求"""
+                try:
+                    requests.post(
+                        self.notification_url,
+                        json=request_data,
+                        headers={'User-Agent': 'DouyinLiveRecorder/1.0'},
+                        timeout=30
+                    )
+                    # 静默处理结果,不记录日志
+                except Exception:
+                    # 静默处理异常,不记录日志
+                    pass
+
+            # 启动后台线程,daemon=True确保主线程退出时自动清理
+            thread = threading.Thread(target=_send_in_background, daemon=True)
+            thread.start()
+
+            return True
+
         except Exception as e:
             logger.error(
-                f"{log_ctx if 'log_ctx' in locals() else ''} 分片通知发送失败: "
+                f"{log_ctx if 'log_ctx' in locals() else ''} ❌ 启动通知发送失败: "
                 f"segment_id={segment_id}, error={e}",
                 exc_info=True
             )

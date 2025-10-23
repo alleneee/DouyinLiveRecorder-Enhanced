@@ -37,9 +37,9 @@ class AliyunOSSUploader:
         >>> print(result['url'])
     """
     
-    # 分片上传阈值（100MB）
-    MULTIPART_THRESHOLD = 100 * 1024 * 1024
-    
+    # 分片上传阈值（50MB）- 降低阈值以提升大文件上传体验
+    MULTIPART_THRESHOLD = 50 * 1024 * 1024
+
     # 每个分片大小（10MB）
     PART_SIZE = 10 * 1024 * 1024
     
@@ -232,10 +232,8 @@ class AliyunOSSUploader:
             }
             
         except Exception as e:
-            logger.error(
-                f"{log_context} OSS上传失败: {e}",
-                exc_info=True
-            )
+            # ✅ 使用参数化日志避免二次格式化问题
+            logger.error("{} OSS上传失败: {}", log_context, str(e), exc_info=True)
             raise
     
     def _simple_upload(

@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS video_segments (
     
     -- 录制信息（冗余，便于查询）
     streamer_name VARCHAR(100) COMMENT '主播名称',
-    platform VARCHAR(50) COMMENT '平台名称',
+    platform VARCHAR(50) NOT NULL COMMENT '平台名称（冗余字段）',
+    platform_room_id VARCHAR(100) COMMENT '平台房间ID（冗余字段）',
     segment_index INT COMMENT '切片索引（同一会话内的序号）',
     
     -- 分片时间信息
@@ -73,16 +74,18 @@ CREATE TABLE IF NOT EXISTS video_segments (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     completed_at DATETIME COMMENT '录制完成时间',
-    
-    FOREIGN KEY (room_id) REFERENCES live_rooms(id) ON DELETE CASCADE,
+
+    -- 索引（已移除外键约束，改用联合索引）
     INDEX idx_room_id (room_id),
     INDEX idx_session (session_id),
     INDEX idx_room_session (room_id, session_id),
     INDEX idx_status (status),
     INDEX idx_session_started (session_started_at),
     INDEX idx_platform (platform),
-    INDEX idx_streamer (streamer_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频分片信息表';
+    INDEX idx_platform_room_id (platform_room_id),
+    INDEX idx_streamer (streamer_name),
+    INDEX idx_platform_room_session (platform, platform_room_id, session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频分片信息表（无外键约束）';
 
 -- 创建视图：录制会话统计
 CREATE OR REPLACE VIEW recording_sessions_view AS

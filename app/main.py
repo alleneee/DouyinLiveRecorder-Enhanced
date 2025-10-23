@@ -61,13 +61,12 @@ async def lifespan(app: FastAPI):
     )
     
     yield
-    
+
     # 关闭时清理
-    logger.info("停止所有监听线程...")
+    logger.info("停止所有监听和录制任务...")
     from app.services.recording_manager import recording_manager
-    for room_id in list(recording_manager.monitor_threads.keys()):
-        recording_manager.stop_monitor(room_id)
-    
+    recording_manager.shutdown()  # ✅ 使用新的优雅关闭方法
+
     logger.info("API服务已关闭")
 
 

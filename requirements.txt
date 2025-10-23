@@ -5,6 +5,7 @@ pycryptodome>=3.20.0
 distro>=1.9.0
 tqdm>=4.67.1
 httpx[http2]>=0.28.1
+aiohttp>=3.9.0
 PyExecJS>=1.5.1
 
 # FastAPI和Web框架
@@ -25,3 +26,6 @@ python-dotenv>=1.0.0
 
 # 阿里云OSS (必需)
 oss2>=2.18.0
+
+# 文件系统监控
+watchdog>=6.0.0

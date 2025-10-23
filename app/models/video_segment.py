@@ -1,22 +1,6 @@
-"""视频分片模型 - 简化版
-
-只保留核心字段：
-- 关联信息：room_id（外键关联live_rooms表）
-- 会话信息：session_id（会话的开始/结束时间存储在live_rooms表）
-- 分片信息：segment_index, segment_started_at, segment_ended_at, duration
-- OSS路径：oss_video_url, oss_audio_url (存储相对路径key,不包含域名)
-- 状态：status, error_message
-
-说明：
-- room_id: 通过外键关联查询主播名称和平台信息，避免数据冗余
-- session_id: 录制会话标识，会话的开始/结束时间存储在live_rooms表中
-- segment_started_at/segment_ended_at: 单个分片的实际开始/结束时间
-- duration: 分片实际时长（秒），可能小于配置的segment_duration（直播提前结束）
-- oss_video_url/oss_audio_url: 存储OSS对象键(相对路径),不包含域名前缀
-  例如: live-recorder/prod/抖音/296728101980/20251021/48/video.ts
-  访问时需拼接完整URL: https://{bucket}.{endpoint}/{oss_video_url}
+"""视频分片模型 
 """
-from sqlalchemy import Column, Integer, String, DateTime, Text, Enum, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, Index
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
@@ -34,11 +18,13 @@ class SegmentStatus(str, enum.Enum):
 class VideoSegment(Base):
     """视频分片表 - 包含详细的录制信息和视频元数据"""
     __tablename__ = "video_segments"
+    __table_args__ = (
+        Index('idx_platform_room_session', 'platform', 'platform_room_id', 'session_id'),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     room_id = Column(
         Integer,
-        ForeignKey("live_rooms.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
         comment="直播间ID"
@@ -54,9 +40,12 @@ class VideoSegment(Base):
     # 录制信息
     segment_index = Column(Integer, comment="切片索引（同一会话内的序号）")
     
-    # 分片时间信息
-    segment_started_at = Column(DateTime, comment="分片开始时间")
-    segment_ended_at = Column(DateTime, comment="分片结束时间")
+    # 分片时间信息（相对时间，格式：HH:MM:SS）
+    # 存储相对于录制开始的时间，例如：
+    # seg0: started_at="00:00:00", ended_at="00:20:00"
+    # seg1: started_at="00:20:00", ended_at="00:40:00"
+    segment_started_at = Column(String(20), comment="分片相对开始时间(HH:MM:SS格式)")
+    segment_ended_at = Column(String(20), comment="分片相对结束时间(HH:MM:SS格式)")
     duration = Column(Integer, comment="分片实际时长(秒)，可能小于配置的segment_duration")
     
     # OSS相对路径(不包含域名,只存储key)

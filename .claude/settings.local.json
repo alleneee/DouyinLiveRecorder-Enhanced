@@ -1,3 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__serena__find_symbol",
+      "mcp__serena__search_for_pattern"
+    ]
+  },
   "outputStyle": "Explanatory"
 }
