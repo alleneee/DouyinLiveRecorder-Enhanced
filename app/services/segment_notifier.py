@@ -42,6 +42,39 @@ class SegmentNotifier:
         else:
             logger.info(f"✅ 分片通知服务已启用: {self.notification_url}")
 
+    def _get_http_error_message(self, status_code: int, response_text: str) -> str:
+        """
+        根据HTTP状态码返回详细的错误说明
+
+        Args:
+            status_code: HTTP状态码
+            response_text: 响应内容
+
+        Returns:
+            详细的错误说明和排查建议
+        """
+        error_messages = {
+            400: "❌ 400 Bad Request - 请求数据格式错误\n  排查: 检查接收端数据验证逻辑",
+            401: "❌ 401 Unauthorized - 未授权\n  排查: 检查是否需要认证token",
+            403: "❌ 403 Forbidden - 禁止访问\n  排查: 检查接收端访问权限配置",
+            404: "❌ 404 Not Found - 接口不存在\n  排查: 检查URL路径是否正确: /shard/plan",
+            405: "❌ 405 Method Not Allowed - 请求方法不允许\n  排查: 确认接口支持POST方法",
+            429: "❌ 429 Too Many Requests - 请求过于频繁\n  排查: 接收端可能有限流,稍后重试",
+            500: "❌ 500 Internal Server Error - 接收端服务器内部错误\n  排查: 查看接收端错误日志,检查业务逻辑bug",
+            502: "❌ 502 Bad Gateway - 网关错误\n  排查建议:\n"
+                 "    1. 检查接收端服务是否正常运行: systemctl status your-service\n"
+                 "    2. 检查反向代理(Nginx/Apache)配置和日志\n"
+                 "    3. 检查接收端服务端口是否正确监听\n"
+                 "    4. 测试接收端可用性: curl -X POST http://your-api/shard/plan",
+            503: "❌ 503 Service Unavailable - 服务不可用\n  排查: 接收端服务可能在维护或重启中",
+            504: "❌ 504 Gateway Timeout - 网关超时\n  排查: 接收端处理时间过长(>30秒),优化处理逻辑或增加超时配置"
+        }
+
+        return error_messages.get(
+            status_code,
+            f"❌ HTTP {status_code} - 未知错误\n  排查: 查看接收端日志了解详情"
+        )
+
     def format_datetime_to_iso(self, dt: datetime) -> str:
         """
         将datetime对象格式化为ISO格式字符串
@@ -228,17 +261,16 @@ class SegmentNotifier:
             if not notification_data:
                 return False
 
-            # ✅ 打印发送入参
             import json
             request_data = notification_data.model_dump()
             logger.info(f"通知处理分片: {request_data}")
 
-            # 发送HTTP请求(异步)
-            # 使用aiohttp，解决httpx与服务端的兼容性问题（502错误）
             import aiohttp
             
             try:
-                async with aiohttp.ClientSession() as session:
+                # 创建 ClientSession 时禁用代理环境变量读取
+                connector = aiohttp.TCPConnector()
+                async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
                     async with session.post(
                         self.notification_url,
                         json=request_data,
@@ -279,15 +311,21 @@ class SegmentNotifier:
         segment_id: int
     ) -> bool:
         """
-        同步发送通知(用于线程中调用)
-        采用fire-and-forget模式,发送后立即返回,不等待响应
+        同步发送通知并验证响应(用于线程中调用)
+
+        改进点:
+        1. 检查HTTP状态码(200-299为成功)
+        2. 验证响应body格式
+        3. 记录详细的成功/失败日志
+        4. 返回实际发送结果
 
         Args:
             db: 数据库会话
             segment_id: 视频分片ID
 
         Returns:
-            是否成功启动发送任务(不代表HTTP请求成功)
+            True: 通知发送成功且对方确认接收
+            False: 发送失败或对方拒绝
         """
         if not self.enabled:
             return False
@@ -316,43 +354,133 @@ class SegmentNotifier:
                 logger.error(f"{log_ctx} 构建通知数据失败")
                 return False
 
-            # ✅ 打印发送入参后立即返回
             import json
+            import requests
             request_data = notification_data.model_dump()
 
+            # 🔍 始终打印请求入参(使用print确保输出)
+            print(f"\n{'='*80}")
+            print(f"{log_ctx} 📤 准备发送分片通知")
+            print(f"{'='*80}")
+            print(f"URL: {self.notification_url}")
+            print(f"请求入参:")
+            print(json.dumps(request_data, ensure_ascii=False, indent=2))
+            print(f"{'='*80}\n")
+
+            # 同时记录到日志
             logger.info(
-                f"{log_ctx} 📤 分片通知(fire-and-forget):\n"
+                f"{log_ctx} 📤 准备发送分片通知:\n"
                 f"  URL: {self.notification_url}\n"
                 f"  入参: {json.dumps(request_data, ensure_ascii=False, indent=2)}"
             )
 
-            # 🔥 Fire-and-forget: 启动后台线程发送,立即返回
-            import threading
-            import requests
-
-            def _send_in_background():
-                """后台线程发送HTTP请求"""
+            # ✅ 使用 requests 同步发送并验证响应
+            # 禁用代理,避免本地代理导致的 502 错误
+            try:
+                # 临时保存环境变量中的代理设置
+                import os
+                old_http_proxy = os.environ.get('HTTP_PROXY')
+                old_https_proxy = os.environ.get('HTTPS_PROXY')
+                old_http_proxy_lower = os.environ.get('http_proxy')
+                old_https_proxy_lower = os.environ.get('https_proxy')
+                
+                # 临时清除环境变量中的代理设置
+                os.environ.pop('HTTP_PROXY', None)
+                os.environ.pop('HTTPS_PROXY', None)
+                os.environ.pop('http_proxy', None)
+                os.environ.pop('https_proxy', None)
+                
                 try:
-                    requests.post(
+                    response = requests.post(
                         self.notification_url,
                         json=request_data,
                         headers={'User-Agent': 'DouyinLiveRecorder/1.0'},
-                        timeout=30
+                        timeout=self.timeout,
+                        proxies={'http': None, 'https': None}  # 禁用代理
                     )
-                    # 静默处理结果,不记录日志
-                except Exception:
-                    # 静默处理异常,不记录日志
-                    pass
+                finally:
+                    # 恢复原始的代理环境变量
+                    if old_http_proxy is not None:
+                        os.environ['HTTP_PROXY'] = old_http_proxy
+                    if old_https_proxy is not None:
+                        os.environ['HTTPS_PROXY'] = old_https_proxy
+                    if old_http_proxy_lower is not None:
+                        os.environ['http_proxy'] = old_http_proxy_lower
+                    if old_https_proxy_lower is not None:
+                        os.environ['https_proxy'] = old_https_proxy_lower
 
-            # 启动后台线程,daemon=True确保主线程退出时自动清理
-            thread = threading.Thread(target=_send_in_background, daemon=True)
-            thread.start()
+                status_code = response.status_code
+                response_text = response.text[:1000]  # 增加到1000字符
 
-            return True
+                # ✅ 检查HTTP状态码
+                if 200 <= status_code < 300:
+                    # 尝试解析响应body
+                    try:
+                        response_body = response.json()
+                        logger.info(
+                            f"{log_ctx} ✅ 分片通知发送成功:\n"
+                            f"  HTTP状态: {status_code}\n"
+                            f"  响应内容: {json.dumps(response_body, ensure_ascii=False, indent=2)}"
+                        )
+                    except Exception:
+                        # 无法解析JSON,使用原始文本
+                        logger.info(
+                            f"{log_ctx} ✅ 分片通知发送成功:\n"
+                            f"  HTTP状态: {status_code}\n"
+                            f"  响应内容: {response_text}"
+                        )
+                    return True
+
+                else:
+                    # ❌ HTTP状态码异常
+                    error_msg = self._get_http_error_message(status_code, response_text)
+
+                    logger.error(
+                        f"{log_ctx} ❌ 分片通知发送失败:\n"
+                        f"  HTTP状态: {status_code}\n"
+                        f"  响应内容: {response_text}\n"
+                        f"  {error_msg}"
+                    )
+
+                    # 同时打印到控制台
+                    print(f"\n{'='*80}")
+                    print(f"{log_ctx} ❌ 分片通知发送失败")
+                    print(f"{'='*80}")
+                    print(f"HTTP状态: {status_code}")
+                    print(f"响应内容: {response_text}")
+                    print(f"{error_msg}")
+                    print(f"{'='*80}\n")
+
+                    return False
+
+            except requests.exceptions.Timeout:
+                logger.error(
+                    f"{log_ctx} ❌ 分片通知超时:\n"
+                    f"  超时时间: {self.timeout}秒\n"
+                    f"  请检查网络连接或增加timeout配置"
+                )
+                return False
+
+            except requests.exceptions.ConnectionError as conn_err:
+                logger.error(
+                    f"{log_ctx} ❌ 分片通知连接失败:\n"
+                    f"  错误信息: {str(conn_err)}\n"
+                    f"  请检查URL是否正确: {self.notification_url}"
+                )
+                return False
+
+            except Exception as req_err:
+                logger.error(
+                    f"{log_ctx} ❌ 分片通知请求异常:\n"
+                    f"  错误类型: {type(req_err).__name__}\n"
+                    f"  错误信息: {str(req_err)}",
+                    exc_info=True
+                )
+                return False
 
         except Exception as e:
             logger.error(
-                f"{log_ctx if 'log_ctx' in locals() else ''} ❌ 启动通知发送失败: "
+                f"{log_ctx if 'log_ctx' in locals() else ''} ❌ 分片通知处理失败: "
                 f"segment_id={segment_id}, error={e}",
                 exc_info=True
             )

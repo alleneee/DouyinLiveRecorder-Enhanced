@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     video_save_type: str = "mp4"  # 最终保存格式 (上传OSS的格式)
     video_record_format: str = "ts"  # 录制时使用的格式 (ts/flv, ts更稳定)
     video_save_path: str = "./downloads"  # 保存路径
-    max_concurrent_recordings: int = Field(5, description="最大并发录制数量（防止资源耗尽）")
+    max_concurrent_recordings: int = Field(50, description="最大并发录制数量（防止资源耗尽，推荐30-50）")
     
     # FFmpeg编码配置
     force_keyframe_mode: bool = Field(True, description="强制关键帧模式：确保精确分段但需重新编码视频")
@@ -56,8 +56,12 @@ class Settings(BaseSettings):
     retry_backoff_multiplier: float = Field(2.0, description="重试延迟倍增因子（指数退避）")
 
     # 线程池配置
-    monitor_thread_pool_size: int = Field(10, description="监控线程池大小")
-    recording_thread_pool_size: int = Field(5, description="录制线程池大小")
+    monitor_thread_pool_size: int = Field(50, description="监控线程池大小（建议>=max_concurrent_recordings）")
+    recording_thread_pool_size: int = Field(50, description="录制线程池大小（建议>=max_concurrent_recordings）")
+    
+    # OSS上传队列配置
+    oss_upload_workers: int = Field(15, description="OSS上传工作线程数（建议10-20）")
+    oss_upload_queue_size: int = Field(500, description="OSS上传队列最大长度")
 
     @property
     def ffmpeg_format(self) -> str:

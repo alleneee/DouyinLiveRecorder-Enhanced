@@ -50,7 +50,18 @@ async def lifespan(app: FastAPI):
                     )
         except Exception as e:
             logger.error(f"加载监听失败: {e}", exc_info=True)
-    
+
+    # 恢复中断的录制任务（必须在监听任务恢复后执行）
+    logger.info("检查并恢复中断的录制任务...")
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            recording_manager.recover_interrupted_recordings
+        )
+    except Exception as e:
+        logger.error(f"恢复录制任务失败: {e}", exc_info=True)
+
     logger.info(
         "API服务启动成功",
         extra={

@@ -31,6 +31,27 @@ SEGMENT_NOTIFICATION_URL=http://your-api.com/webhook/segment
 - **Content-Type**: `application/json`
 - **超时时间**: 30秒(默认)
 
+### 响应要求
+
+**接收端必须返回HTTP 200-299状态码**,否则发送方会认为通知失败并记录错误日志。
+
+**推荐响应格式**:
+```json
+{
+  "code": 0,
+  "message": "success"
+}
+```
+
+**失败响应示例**:
+- HTTP 4xx: 客户端错误(数据格式不正确等)
+- HTTP 5xx: 服务端错误(处理失败等)
+
+**注意**:
+- ✅ 发送方会验证HTTP状态码和响应内容
+- ✅ 响应body会完整记录到日志中
+- ❌ 响应失败会详细记录错误原因
+
 ### 请求体结构
 
 ```json

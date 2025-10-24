@@ -328,12 +328,102 @@ class RecordingManager:
         self.directory_observers: Dict[str, Observer] = {}  # key=save_dir, value=Observer
         self.segment_handlers: Dict[str, 'SegmentFileHandler'] = {}  # key=session_id, value=Handler
         self.observer_lock = threading.Lock()
+        
+        # ✅ 启动全局OSS上传队列
+        if settings.oss_enabled:
+            from app.services.upload_queue_manager import upload_queue_manager
+            upload_queue_manager.start()
+            logger.info(f"✅ OSS上传队列已启动: workers={settings.oss_upload_workers}, queue_size={settings.oss_upload_queue_size}")
 
         logger.info(f"RecordingManager initialized:")
         logger.info(f"  - max_concurrent_recordings={settings.max_concurrent_recordings}")
         logger.info(f"  - monitor_thread_pool_size={settings.monitor_thread_pool_size}")
         logger.info(f"  - recording_thread_pool_size={settings.recording_thread_pool_size}")
         logger.info(f"  - max_retry_attempts={settings.max_retry_attempts}")
+
+    def recover_interrupted_recordings(self):
+        """
+        应用重启后,恢复中断的录制任务
+
+        检查数据库中所有 record_status=RECORDING 的房间,
+        保留原有的 session_id 并重新启动录制任务
+        """
+        from app.database import SessionLocal
+        from app.models.live_room import LiveRoom, RecordStatus
+
+        db = SessionLocal()
+        try:
+            # 查询所有正在录制的房间
+            recording_rooms = db.query(LiveRoom).filter(
+                LiveRoom.record_status == RecordStatus.RECORDING
+            ).all()
+
+            if not recording_rooms:
+                logger.info("📋 没有需要恢复的录制任务")
+                return
+
+            logger.info(f"📋 发现 {len(recording_rooms)} 个中断的录制任务,开始恢复...")
+
+            for room in recording_rooms:
+                try:
+                    log_ctx = _make_log_context(
+                        room.platform,
+                        room.platform_room_id,
+                        room.current_session_id
+                    )
+
+                    # 验证 session 信息完整性
+                    if not room.current_session_id:
+                        logger.warning(f"{log_ctx} session_id 缺失,跳过恢复")
+                        room.record_status = RecordStatus.IDLE
+                        db.commit()
+                        continue
+
+                    if not room.current_session_started_at:
+                        logger.warning(f"{log_ctx} session_started_at 缺失,跳过恢复")
+                        room.record_status = RecordStatus.IDLE
+                        db.commit()
+                        continue
+
+                    # 检查直播状态
+                    logger.info(f"{log_ctx} 检查直播状态...")
+                    is_live = self._check_live_status(room)
+
+                    if not is_live:
+                        # 直播已结束,清理 session
+                        logger.info(f"{log_ctx} 直播已结束,清理会话")
+                        self._stop_recording(db, room)
+                        continue
+
+                    # 直播仍在进行,恢复录制 (保留原有 session_id)
+                    logger.info(f"{log_ctx} 🔄 恢复录制任务...")
+                    logger.info(f"{log_ctx}   Session ID: {room.current_session_id}")
+                    logger.info(f"{log_ctx}   开始时间: {room.current_session_started_at}")
+
+                    # 重新启动录制任务 (会使用现有的 session_id)
+                    self._start_recording(db, room)
+
+                    logger.info(f"{log_ctx} ✅ 录制任务恢复成功")
+
+                except Exception as e:
+                    logger.error(
+                        f"恢复录制任务失败 room_id={room.id}: {e}",
+                        exc_info=True
+                    )
+                    # 发生错误时重置状态
+                    try:
+                        room.record_status = RecordStatus.IDLE
+                        db.commit()
+                    except:
+                        db.rollback()
+
+            logger.info("✅ 录制任务恢复完成")
+
+        except Exception as e:
+            logger.error(f"恢复录制任务异常: {e}", exc_info=True)
+            db.rollback()
+        finally:
+            db.close()
 
     def cleanup_unused_observers(self):
         """清理未使用的 watchdog observers - 在录制结束后调用"""
@@ -478,6 +568,16 @@ class RecordingManager:
                 except Exception as e:
                     logger.error(f"停止 observer 失败 {save_dir}: {e}")
             self.directory_observers.clear()
+        
+        # 5. 停止OSS上传队列（等待队列清空）
+        if settings.oss_enabled:
+            logger.info("停止OSS上传队列...")
+            try:
+                from app.services.upload_queue_manager import upload_queue_manager
+                upload_queue_manager.stop(timeout=60)
+                logger.info("✅ OSS上传队列已停止")
+            except Exception as e:
+                logger.error(f"停止OSS上传队列失败: {e}")
 
         logger.info("✅ RecordingManager 已安全关闭")
 
@@ -1177,12 +1277,18 @@ class RecordingManager:
             seg_ctx = _make_log_context(room.platform, room.platform_room_id, session_id, segment_index)
             logger.info(f"{seg_ctx} 分片创建成功, 时长={duration}秒, 文件={os.path.basename(file_path)}")
 
-            # 异步上传视频和音频
-            threading.Thread(
-                target=self._upload_video_and_audio,
-                args=(video_segment.id, file_path, room.platform, room.platform_room_id, session_id),
-                daemon=True
-            ).start()
+            # 异步上传视频和音频（使用线程池）
+            if settings.oss_enabled:
+                self.recording_pool.submit(
+                    self._upload_video_and_audio_with_queue,
+                    video_segment.id, file_path, room.platform, room.platform_room_id, session_id, segment_index
+                )
+            else:
+                # 未启用OSS，直接处理（转换格式）
+                self.recording_pool.submit(
+                    self._upload_video_and_audio,
+                    video_segment.id, file_path, room.platform, room.platform_room_id, session_id
+                )
         except Exception as e:
             # 在异常时也使用带 segment_index 的上下文(如果可用)
             error_ctx = _make_log_context(
@@ -1194,6 +1300,341 @@ class RecordingManager:
             logger.error(f"{error_ctx} 切片记录创建失败: {e}")
             import traceback
             logger.error(f"{error_ctx} 异常堆栈: {traceback.format_exc()}")
+
+    def _upload_video_and_audio_with_queue(self, segment_id: int, video_path: str,
+                                            platform: str, platform_room_id: str, session_id: str, segment_index: int):
+        """使用上传队列处理视频和音频上传
+        
+        Args:
+            segment_id: 分片ID
+            video_path: 视频文件路径
+            platform: 平台名称
+            platform_room_id: 平台房间ID
+            session_id: 会话ID
+            segment_index: 分片索引
+        """
+        from app.services.upload_queue_manager import upload_queue_manager, UploadTask
+        from app.services.audio_extractor import audio_extractor
+        from app.services.video_converter import video_converter
+        import os
+        
+        db = SessionLocal()
+        audio_path = None
+        original_ts_path = None
+        converted_video_path = None
+        log_ctx = _make_log_context(platform, platform_room_id, session_id, segment_index)
+        
+        try:
+            video_segment = db.query(VideoSegment).filter(VideoSegment.id == segment_id).first()
+            if not video_segment:
+                logger.warning(f"{log_ctx} 视频分片不存在")
+                return
+            
+            video_segment.status = SegmentStatus.UPLOADING
+            db.commit()
+            
+            # 1. 格式转换 (TS → MP4)
+            logger.debug(f"{log_ctx} 开始格式转换")
+            original_ts_path = video_path
+            converted_video_path = video_converter.convert_to_target_format(
+                input_path=video_path,
+                delete_source=False,
+                log_context=log_ctx
+            )
+            
+            if not converted_video_path:
+                raise Exception("视频格式转换失败")
+            
+            video_path = converted_video_path
+            
+            # 2. 抽取音频
+            logger.debug(f"{log_ctx} 开始抽取音频")
+            audio_path = audio_extractor.extract_audio(video_path=video_path, delete_source=False)
+            if not audio_path:
+                raise Exception("音频抽取失败")
+            
+            # 3. 创建上传任务并提交到队列（FIFO，先进先出）
+            # 视频上传任务
+            video_task = UploadTask(
+                task_id=f"video_{segment_id}",
+                file_path=video_path,
+                object_key=None,
+                log_context=log_ctx,
+                priority=5,  # 固定优先级，按提交顺序FIFO处理
+                callback=lambda success, result, error: self._on_video_upload_complete(
+                    segment_id, video_path, audio_path, original_ts_path,
+                    success, result, error, log_ctx
+                )
+            )
+            
+            # 音频上传任务
+            audio_task = UploadTask(
+                task_id=f"audio_{segment_id}",
+                file_path=audio_path,
+                object_key=None,
+                log_context=log_ctx,
+                priority=5,  # 固定优先级，按提交顺序FIFO处理
+                callback=lambda success, result, error: self._on_audio_upload_complete(
+                    segment_id, video_path, audio_path, original_ts_path,
+                    success, result, error, log_ctx
+                )
+            )
+            
+            # 提交任务到队列
+            video_submitted = upload_queue_manager.submit(video_task)
+            audio_submitted = upload_queue_manager.submit(audio_task)
+            
+            if not (video_submitted and audio_submitted):
+                raise Exception(f"任务提交失败: video={video_submitted}, audio={audio_submitted}")
+            
+            logger.info(f"{log_ctx} 上传任务已提交到队列, queue_size={upload_queue_manager.get_queue_size()}")
+            
+        except Exception as e:
+            logger.error(f"{log_ctx} 准备上传任务失败: {e}", exc_info=True)
+            
+            # 更新失败状态
+            try:
+                failed_segment = db.query(VideoSegment).filter(VideoSegment.id == segment_id).first()
+                if failed_segment:
+                    failed_segment.status = SegmentStatus.FAILED.value
+                    failed_segment.error_message = f"准备上传失败: {str(e)}"
+                    db.commit()
+            except Exception as update_error:
+                logger.error(f"{log_ctx} 更新失败状态出错: {update_error}")
+            
+            # 清理临时文件
+            self._cleanup_temp_files(video_path, audio_path, original_ts_path, log_ctx)
+        finally:
+            db.close()
+    
+    def _on_video_upload_complete(self, segment_id: int, video_path: str,
+                                   audio_path: str, original_ts_path: str,
+                                   success: bool, result: dict, error: str, log_ctx: str):
+        """视频上传完成回调
+        
+        ⚠️ 注意：此回调在上传队列的工作线程中执行，创建独立的数据库会话
+        """
+        db_callback = SessionLocal()
+        try:
+            if success:
+                try:
+                    video_segment = db_callback.query(VideoSegment).filter(
+                        VideoSegment.id == segment_id
+                    ).first()
+                    
+                    if video_segment:
+                        video_segment.oss_video_url = result['key']
+                        db_callback.commit()
+                        logger.debug(f"{log_ctx} 视频URL已保存: {result['key']}")
+                        
+                        # ✅ 检查是否视频和音频都已上传完成，如果是则发送通知
+                        self._check_and_finalize_upload(
+                            db_callback, segment_id, video_path, audio_path, 
+                            original_ts_path, log_ctx
+                        )
+                except Exception as e:
+                    logger.error(f"{log_ctx} 保存视频URL失败: {e}", exc_info=True)
+                    db_callback.rollback()
+            else:
+                logger.error(f"{log_ctx} 视频上传失败: {error}")
+                self._mark_segment_failed(db_callback, segment_id, f"视频上传失败: {error}")
+        finally:
+            db_callback.close()
+    
+    def _on_audio_upload_complete(self, segment_id: int, video_path: str,
+                                   audio_path: str, original_ts_path: str,
+                                   success: bool, result: dict, error: str, log_ctx: str):
+        """音频上传完成回调
+        
+        ⚠️ 注意：此回调在上传队列的工作线程中执行，创建独立的数据库会话
+        """
+        db_callback = SessionLocal()
+        try:
+            if success:
+                try:
+                    video_segment = db_callback.query(VideoSegment).filter(
+                        VideoSegment.id == segment_id
+                    ).first()
+                    
+                    if video_segment:
+                        video_segment.oss_audio_url = result['key']
+                        db_callback.commit()
+                        logger.debug(f"{log_ctx} 音频URL已保存: {result['key']}")
+                        
+                        # ✅ 检查是否视频和音频都已上传完成，如果是则发送通知
+                        self._check_and_finalize_upload(
+                            db_callback, segment_id, video_path, audio_path, 
+                            original_ts_path, log_ctx
+                        )
+                except Exception as e:
+                    logger.error(f"{log_ctx} 保存音频URL失败: {e}", exc_info=True)
+                    db_callback.rollback()
+            else:
+                logger.error(f"{log_ctx} 音频上传失败: {error}")
+                self._mark_segment_failed(db_callback, segment_id, f"音频上传失败: {error}")
+        finally:
+            db_callback.close()
+    
+    def _check_and_finalize_upload(self, db: Session, segment_id: int,
+                                    video_path: str, audio_path: str, original_ts_path: str, log_ctx: str):
+        """检查并完成上传流程（线程安全，只通知一次）
+        
+        ⚠️ 重要：视频和音频上传是并行的，两个回调都会调用此方法
+        需要确保：
+        1. 只有当视频和音频都上传完成时才执行后续逻辑
+        2. 通知只发送一次（幂等性）
+        3. 线程安全（数据库行锁）
+        """
+        try:
+            # ✅ 使用 with_for_update() 添加行锁，避免并发更新冲突
+            video_segment = db.query(VideoSegment).filter(
+                VideoSegment.id == segment_id
+            ).with_for_update().first()
+            
+            if not video_segment:
+                logger.warning(f"{log_ctx} 分片不存在，可能已被删除")
+                return
+            
+            # ✅ 幂等性检查：如果已经是UPLOADED状态，说明已经处理过了，直接返回
+            if video_segment.status == SegmentStatus.UPLOADED:
+                logger.debug(f"{log_ctx} 分片已处理完成，跳过重复处理")
+                return
+            
+            # ✅ 检查视频和音频是否都已上传完成
+            has_video = bool(video_segment.oss_video_url)
+            has_audio = bool(video_segment.oss_audio_url)
+            
+            if not (has_video and has_audio):
+                # 还有文件未上传完成，等待另一个回调
+                logger.debug(
+                    f"{log_ctx} 等待其他文件上传完成 "
+                    f"(video={has_video}, audio={has_audio})"
+                )
+                db.commit()  # 释放行锁
+                return
+            
+            video_segment.status = SegmentStatus.UPLOADED
+            db.commit()
+            
+            logger.info(f"{log_ctx} 🎉 分片上传完成，准备发送通知")
+            
+            try:
+                db_new = SessionLocal()
+                try:
+                    seg_for_stats = db_new.query(VideoSegment).filter(
+                        VideoSegment.id == segment_id
+                    ).first()
+                    if seg_for_stats:
+                        self._update_session_completion_if_needed(db_new, seg_for_stats)
+                finally:
+                    db_new.close()
+            except Exception as stats_error:
+                logger.error(f"{log_ctx} 更新session统计失败: {stats_error}")
+            
+            # ✅ 异步发送通知（fire-and-forget，不阻塞主流程）
+            try:
+                from app.services.segment_notifier import segment_notifier
+                # 提交到线程池异步执行，不等待结果
+                self.recording_pool.submit(
+                    self._send_notification_async,
+                    segment_id,
+                    log_ctx
+                )
+                logger.info(f"{log_ctx} 📤 分片通知已提交到后台线程")
+            except Exception as notify_error:
+                logger.error(f"{log_ctx} ❌ 提交分片通知任务失败: {notify_error}", exc_info=True)
+            
+            # ✅ 清理本地文件
+            self._cleanup_temp_files(video_path, audio_path, original_ts_path, log_ctx, include_m3u8=True)
+            
+        except Exception as e:
+            logger.error(f"{log_ctx} 完成上传流程失败: {e}", exc_info=True)
+            db.rollback()
+    
+    def _mark_segment_failed(self, db: Session, segment_id: int, error_msg: str):
+        """标记分片上传失败"""
+        try:
+            segment = db.query(VideoSegment).filter(VideoSegment.id == segment_id).first()
+            if segment:
+                segment.status = SegmentStatus.FAILED.value
+                segment.error_message = error_msg
+                db.commit()
+        except Exception as e:
+            logger.error(f"标记分片失败状态出错: {e}")
+    
+    def _cleanup_temp_files(self, video_path: str, audio_path: str, original_ts_path: str,
+                            log_ctx: str, include_m3u8: bool = False):
+        """清理临时文件"""
+        import os
+        
+        try:
+            files_cleaned = []
+            
+            # 删除原始TS文件
+            if original_ts_path and os.path.exists(original_ts_path) and original_ts_path != video_path:
+                os.remove(original_ts_path)
+                files_cleaned.append(f"TS: {os.path.basename(original_ts_path)}")
+            
+            # 删除MP4文件
+            if video_path and os.path.exists(video_path):
+                os.remove(video_path)
+                files_cleaned.append(f"MP4: {os.path.basename(video_path)}")
+            
+            # 删除音频文件
+            if audio_path and os.path.exists(audio_path):
+                os.remove(audio_path)
+                files_cleaned.append(f"MP3: {os.path.basename(audio_path)}")
+            
+            # 删除m3u8文件
+            if include_m3u8 and settings.segment_method == "hls" and original_ts_path:
+                ts_basename = os.path.basename(original_ts_path)
+                timestamp_part = ts_basename.split('_seg')[0] if '_seg' in ts_basename else ts_basename.rsplit('.', 1)[0]
+                m3u8_filename = f"{timestamp_part}_playlist.m3u8"
+                m3u8_path = os.path.join(os.path.dirname(original_ts_path), m3u8_filename)
+                
+                if os.path.exists(m3u8_path):
+                    os.remove(m3u8_path)
+                    files_cleaned.append(f"M3U8: {os.path.basename(m3u8_path)}")
+            
+            if files_cleaned:
+                logger.info(f"{log_ctx} ✅ 本地文件已清理: {', '.join(files_cleaned)}")
+        except Exception as e:
+            logger.error(f"{log_ctx} 清理临时文件失败: {e}")
+
+    def _send_notification_async(self, segment_id: int, log_ctx: str):
+        """
+        在后台线程中发送分片通知
+        
+        Args:
+            segment_id: 分片ID
+            log_ctx: 日志上下文
+        
+        说明:
+            - 此方法在线程池中异步执行
+            - 不阻塞主流程
+            - 使用独立的数据库会话
+            - 即使失败也不影响主流程
+        """
+        db_new = None
+        try:
+            from app.database import SessionLocal
+            from app.services.segment_notifier import segment_notifier
+            
+            db_new = SessionLocal()
+            
+            # 调用同步发送方法（在后台线程中执行）
+            success = segment_notifier.send_notification_sync(db_new, segment_id)
+            
+            if success:
+                logger.info(f"{log_ctx} ✅ 分片通知发送成功")
+            else:
+                logger.warning(f"{log_ctx} ⚠️ 分片通知发送失败(详见上方错误日志)")
+                
+        except Exception as e:
+            logger.error(f"{log_ctx} ❌ 后台发送分片通知异常: {e}", exc_info=True)
+        finally:
+            if db_new:
+                db_new.close()
 
     def _update_session_completion_if_needed(self, db: Session, video_segment: VideoSegment):
         """检查并更新 session 完成信息
@@ -1354,12 +1795,18 @@ class RecordingManager:
             self._update_session_completion_if_needed(db, video_segment)
             logger.debug(f"{log_ctx} 步骤5完成: session统计更新完成")
 
-            # 6. 发送分片完成通知
+            # 6. 异步发送分片完成通知（fire-and-forget，不阻塞主流程）
             try:
                 from app.services.segment_notifier import segment_notifier
-                segment_notifier.send_notification_sync(db, segment_id)
+                # 提交到线程池异步执行，不等待结果
+                self.recording_pool.submit(
+                    self._send_notification_async,
+                    segment_id,
+                    log_ctx
+                )
+                logger.info(f"{log_ctx} 📤 分片通知已提交到后台线程")
             except Exception as notify_error:
-                logger.error(f"{log_ctx} 发送分片通知失败: {notify_error}", exc_info=True)
+                logger.error(f"{log_ctx} ❌ 提交分片通知任务失败: {notify_error}", exc_info=True)
 
             # 7. 删除本地文件（上传成功并落库后，清理所有临时文件）
             try:
