@@ -5,6 +5,7 @@ import time
 from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, Future
 
 from app.logger import logger
 from app.config import settings
@@ -65,21 +66,30 @@ class UploadQueueManager:
     
     def __init__(self, max_workers: int = 10, max_queue_size: int = 500):
         """初始化上传队列管理器
-        
+
         Args:
             max_workers: 上传工作线程数（建议10-20）
             max_queue_size: 最大队列长度（超出时会阻塞）
         """
         self.max_workers = max_workers
         self.max_queue_size = max_queue_size
-        
+
         # 优先级队列（数字越小优先级越高）
         self.task_queue = queue.PriorityQueue(maxsize=max_queue_size)
-        
-        # 工作线程池
-        self.workers = []
+
+        # ✅ 使用 ThreadPoolExecutor 替代手动管理线程
+        self.executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="OSS-Upload-Pool"
+        )
+
+        # 工作线程Future列表（用于跟踪）
+        self.worker_futures = []
         self.running = False
-        
+
+        # 监控线程
+        self.monitor_thread = None
+
         # 统计信息
         self.stats = {
             'total_submitted': 0,
@@ -89,10 +99,10 @@ class UploadQueueManager:
             'current_queue_size': 0
         }
         self.stats_lock = threading.Lock()
-        
+
         logger.info(
-            f"UploadQueueManager初始化: max_workers={max_workers}, "
-            f"max_queue_size={max_queue_size}"
+            f"✅ UploadQueueManager初始化: max_workers={max_workers}, "
+            f"max_queue_size={max_queue_size}, 使用ThreadPoolExecutor"
         )
     
     def start(self):
@@ -100,51 +110,47 @@ class UploadQueueManager:
         if self.running:
             logger.warning("UploadQueueManager已在运行")
             return
-        
+
         self.running = True
-        
-        # 启动工作线程
+
+        # ✅ 使用 ThreadPoolExecutor 提交工作线程
         for i in range(self.max_workers):
-            worker = threading.Thread(
-                target=self._worker_loop,
-                name=f"UploadWorker-{i}",
-                daemon=True
-            )
-            worker.start()
-            self.workers.append(worker)
-        
-        # 启动统计监控线程
-        monitor = threading.Thread(
+            future = self.executor.submit(self._worker_loop)
+            self.worker_futures.append(future)
+
+        # 启动统计监控线程（独立线程，不占用线程池）
+        self.monitor_thread = threading.Thread(
             target=self._monitor_loop,
             name="UploadMonitor",
             daemon=True
         )
-        monitor.start()
-        
-        logger.info(f"UploadQueueManager已启动: {self.max_workers}个工作线程")
+        self.monitor_thread.start()
+
+        logger.info(f"✅ UploadQueueManager已启动: {self.max_workers}个工作线程(ThreadPoolExecutor)")
     
     def stop(self, timeout: int = 30):
         """停止上传队列管理器
-        
+
         Args:
             timeout: 等待队列清空的超时时间（秒）
         """
         if not self.running:
             return
-        
+
         logger.info("停止UploadQueueManager...")
         self.running = False
-        
+
         # 等待队列清空
         wait_start = time.time()
         while not self.task_queue.empty() and (time.time() - wait_start) < timeout:
             time.sleep(1)
-        
-        # 等待工作线程结束
-        for worker in self.workers:
-            worker.join(timeout=5)
-        
-        logger.info(f"UploadQueueManager已停止, 统计: {self.get_stats()}")
+
+        # ✅ 使用 ThreadPoolExecutor 的 shutdown 方法
+        # wait=True 会等待所有任务完成
+        logger.info("等待线程池关闭...")
+        self.executor.shutdown(wait=True, cancel_futures=False)
+
+        logger.info(f"✅ UploadQueueManager已停止, 统计: {self.get_stats()}")
     
     def submit(self, task: UploadTask, block: bool = True, timeout: Optional[int] = None) -> bool:
         """提交上传任务

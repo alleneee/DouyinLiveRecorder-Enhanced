@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     retry_delay_seconds: int = Field(10, description="重试间隔（秒）")
     retry_backoff_multiplier: float = Field(2.0, description="重试延迟倍增因子（指数退避）")
 
+    # 监控配置
+    ffmpeg_progress_ratio: float = Field(0.2, description="FFmpeg录制进度日志输出频率（占segment_duration的比率），0表示禁用进度日志。例如0.2表示每20%分段时长输出一次")
+
     # 线程池配置
     monitor_thread_pool_size: int = Field(50, description="监控线程池大小（建议>=max_concurrent_recordings）")
     recording_thread_pool_size: int = Field(50, description="录制线程池大小（建议>=max_concurrent_recordings）")

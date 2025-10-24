@@ -77,7 +77,7 @@ class AudioExtractor:
         else:
             output_path = Path(output_path)
         
-        logger.info(
+        logger.debug(
             "开始提取音频",
             extra={
                 "video": str(video_path),
@@ -116,7 +116,7 @@ class AudioExtractor:
                 return None
             
             audio_size = output_path.stat().st_size
-            logger.info(
+            logger.debug(
                 "音频提取成功",
                 extra={
                     "audio": str(output_path),

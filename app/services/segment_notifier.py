@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class SegmentNotifier:
     """视频分片通知服务"""
 
-    def __init__(self, notification_url: Optional[str] = None, timeout: int = 30):
+    def __init__(self, notification_url: Optional[str] = None, timeout: int = 120):
         """
         初始化通知服务
 
@@ -275,7 +275,7 @@ class SegmentNotifier:
                         self.notification_url,
                         json=request_data,
                         headers={'User-Agent': 'DouyinLiveRecorder/1.0'},
-                        timeout=aiohttp.ClientTimeout(total=30)
+                        timeout=aiohttp.ClientTimeout(total=self.timeout)
                     ) as response:
                         status = response.status
                         response_text = await response.text()
