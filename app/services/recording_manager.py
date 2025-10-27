@@ -1095,6 +1095,17 @@ class RecordingManager:
                         f"preset={settings.ffmpeg_preset}, crf={settings.ffmpeg_crf}, "
                         f"GOP={gop_size}帧, 音频={settings.audio_codec_mode}"
                     )
+                    
+                    # 打印完整FFmpeg命令（用于调试和问题排查）
+                    ffmpeg_cmd_str = ' '.join(
+                        f'"{arg}"' if ' ' in str(arg) or any(c in str(arg) for c in ['&', '|', '>', '<', ';']) else str(arg)
+                        for arg in ffmpeg_cmd
+                    )
+                    logger.info(f"{log_ctx} FFmpeg完整命令:\n{ffmpeg_cmd_str}")
+                    logger.debug(
+                        f"{log_ctx} 录制参数详情: stream_url_length={len(stream_info['stream_url'])}, "
+                        f"save_dir={save_dir}, playlist={os.path.basename(playlist_path)}"
+                    )
                 else:
                     # ===== Segment模式 (传统) =====
                     # 适用：需要特定格式、兼容性需求
@@ -1130,6 +1141,17 @@ class RecordingManager:
                         f"preset={settings.ffmpeg_preset}, crf={settings.ffmpeg_crf}, "
                         f"GOP={gop_size}帧"
                     )
+                    
+                    # 打印完整FFmpeg命令（用于调试和问题排查）
+                    ffmpeg_cmd_str = ' '.join(
+                        f'"{arg}"' if ' ' in str(arg) or any(c in str(arg) for c in ['&', '|', '>', '<', ';']) else str(arg)
+                        for arg in ffmpeg_cmd
+                    )
+                    logger.info(f"{log_ctx} FFmpeg完整命令:\n{ffmpeg_cmd_str}")
+                    logger.debug(
+                        f"{log_ctx} 录制参数详情: stream_url_length={len(stream_info['stream_url'])}, "
+                        f"save_dir={save_dir}, file_pattern={filename_pattern}"
+                    )
 
                 ffmpeg_process = None
                 video_format = settings.video_record_format.lower()
@@ -1164,6 +1186,8 @@ class RecordingManager:
                         logger.info(f"{log_ctx} watchdog文件监控已存在 (复用+添加handler): {save_dir}")
 
                 try:
+                    logger.debug(f"{log_ctx} 正在启动FFmpeg进程...")
+                    
                     ffmpeg_process = subprocess.Popen(
                         ffmpeg_cmd,
                         stdout=subprocess.PIPE,
@@ -1171,37 +1195,104 @@ class RecordingManager:
                         text=True,
                         bufsize=1  # 行缓冲，实时输出
                     )
+                    
+                    logger.info(
+                        f"{log_ctx} FFmpeg进程已启动, PID={ffmpeg_process.pid}, "
+                        f"模式={settings.segment_method.upper()}"
+                    )
 
                     # 启动线程实时读取FFmpeg的stderr输出
                     def read_ffmpeg_stderr():
                         """实时读取并打印FFmpeg的stderr输出（用于调试）"""
+                        import re
+                        
+                        # FFmpeg输出的第一行通常是版本信息
+                        first_line = True
+                        last_progress_log = 0  # 记录上次输出进度的时间（秒）
+                        
                         try:
                             for line in iter(ffmpeg_process.stderr.readline, ''):
-                                if line:
-                                    # 只输出关键信息，避免刷屏
-                                    line = line.strip()
-                                    # 关键事件：分片创建、错误、警告
-                                    if any(keyword in line.lower() for keyword in ['error', 'warning', 'opening', 'segment', 'failed', 'could not']):
-                                        logger.info(f"{log_ctx} [FFmpeg] {line}")
-                                    # 根据配置输出进度信息（包含time=）
-                                    elif 'time=' in line and 'bitrate=' in line and ffmpeg_progress_interval > 0:
+                                if not line:
+                                    continue
+                                    
+                                line = line.strip()
+                                
+                                # 打印FFmpeg版本信息（第一行）
+                                if first_line and 'ffmpeg version' in line.lower():
+                                    logger.info(f"{log_ctx} [FFmpeg] {line}")
+                                    first_line = False
+                                    continue
+                                
+                                # 日志分类处理
+                                line_lower = line.lower()
+                                
+                                # 【错误】- 最高优先级
+                                if 'error' in line_lower or 'failed' in line_lower:
+                                    logger.error(f"{log_ctx} [FFmpeg ERROR] {line}")
+                                
+                                # 【警告】
+                                elif 'warning' in line_lower:
+                                    logger.warning(f"{log_ctx} [FFmpeg WARN] {line}")
+                                
+                                # 【关键事件】- HLS分片创建
+                                elif 'opening' in line_lower and '.ts' in line_lower:
+                                    # 例如: Opening '/path/seg001.ts' for writing
+                                    logger.info(f"{log_ctx} [FFmpeg] {line}")
+                                
+                                # 【关键事件】- Segment分片信息
+                                elif 'segment' in line_lower and 'start' in line_lower:
+                                    logger.info(f"{log_ctx} [FFmpeg] {line}")
+                                
+                                # 【输入流信息】- Stream #0:0, Stream #0:1 等
+                                elif re.match(r'\s*stream #\d+:\d+', line_lower):
+                                    logger.info(f"{log_ctx} [FFmpeg STREAM] {line}")
+                                
+                                # 【输出流信息】- Output #0
+                                elif 'output #' in line_lower:
+                                    logger.info(f"{log_ctx} [FFmpeg OUTPUT] {line}")
+                                
+                                # 【编码器信息】- encoder, muxer 等关键配置
+                                elif any(kw in line_lower for kw in ['encoder', 'muxer', 'video:', 'audio:', 'metadata:']):
+                                    logger.debug(f"{log_ctx} [FFmpeg CONFIG] {line}")
+                                
+                                # 【进度信息】- frame=xxx time=xx:xx:xx bitrate=xxx
+                                elif 'time=' in line and 'bitrate=' in line:
+                                    if ffmpeg_progress_interval > 0:
                                         # 提取时间信息（例如：time=00:05:23.45）
-                                        import re
                                         time_match = re.search(r'time=(\S+)', line)
                                         if time_match:
-                                            # 根据配置的间隔输出进度
                                             time_str = time_match.group(1)
                                             if time_str.count(':') >= 2:  # 确保格式正确
                                                 parts = time_str.split(':')
                                                 try:
                                                     total_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(float(parts[2]))
-                                                    # 使用配置的间隔，允许2秒误差
-                                                    if total_seconds > 0 and total_seconds % ffmpeg_progress_interval < 2:
-                                                        logger.info(f"{log_ctx} [FFmpeg] 录制进度: {time_str}")
-                                                except:
+                                                    # 使用配置的间隔，避免日志刷屏
+                                                    if total_seconds - last_progress_log >= ffmpeg_progress_interval:
+                                                        # 提取更多进度信息
+                                                        frame_match = re.search(r'frame=\s*(\d+)', line)
+                                                        bitrate_match = re.search(r'bitrate=\s*([\d.]+\w+)', line)
+                                                        speed_match = re.search(r'speed=\s*([\d.]+x)', line)
+                                                        
+                                                        frame = frame_match.group(1) if frame_match else 'N/A'
+                                                        bitrate = bitrate_match.group(1) if bitrate_match else 'N/A'
+                                                        speed = speed_match.group(1) if speed_match else 'N/A'
+                                                        
+                                                        logger.info(
+                                                            f"{log_ctx} [FFmpeg PROGRESS] "
+                                                            f"时间={time_str} | 帧数={frame} | "
+                                                            f"码率={bitrate} | 速度={speed}"
+                                                        )
+                                                        last_progress_log = total_seconds
+                                                except Exception:
                                                     pass
+                                
+                                # 【调试】- 其他所有输出（可选，根据需要启用）
+                                # 取消注释下面这行可以看到FFmpeg的所有输出
+                                # else:
+                                #     logger.debug(f"{log_ctx} [FFmpeg DEBUG] {line}")
+                                
                         except Exception as e:
-                            logger.warning(f"{log_ctx} FFmpeg stderr读取异常: {e}")
+                            logger.error(f"{log_ctx} FFmpeg stderr读取线程异常: {e}", exc_info=True)
 
                     import threading
                     stderr_thread = threading.Thread(target=read_ffmpeg_stderr, daemon=True)
@@ -1228,8 +1319,14 @@ class RecordingManager:
                         time.sleep(1)
 
                     # FFmpeg进程结束后,处理剩余的文件
+                    logger.debug(f"{log_ctx} 等待FFmpeg进程结束...")
                     _, stderr = ffmpeg_process.communicate(timeout=5)
                     return_code = ffmpeg_process.returncode
+                    
+                    logger.info(
+                        f"{log_ctx} FFmpeg进程已退出, "
+                        f"PID={ffmpeg_process.pid}, return_code={return_code}"
+                    )
 
                     # ✅ 检查 stderr 判断是否为手动停止（received signal）
                     is_signal_stop = "received signal" in stderr if stderr else False
@@ -1243,9 +1340,19 @@ class RecordingManager:
                     )
 
                     if is_normal_termination:
-                        logger.info(f"{log_ctx} FFmpeg录制完成: return_code={return_code}, manually_stopped={manually_stopped}, signal_stop={is_signal_stop}")
+                        logger.info(
+                            f"{log_ctx} FFmpeg录制完成（正常退出）, "
+                            f"return_code={return_code}, manually_stopped={manually_stopped}, "
+                            f"signal_stop={is_signal_stop}"
+                        )
                     else:
-                        error_msg = f"FFmpeg异常终止: return_code={return_code}, stderr={stderr[-1000:]}"
+                        # 打印更详细的错误信息
+                        stderr_preview = stderr[-2000:] if stderr else "(无stderr输出)"
+                        error_msg = (
+                            f"FFmpeg异常终止: return_code={return_code}, "
+                            f"manually_stopped={manually_stopped}\n"
+                            f"stderr尾部输出:\n{stderr_preview}"
+                        )
                         logger.error(f"{log_ctx} {error_msg}")
                         raise RuntimeError(error_msg)
 

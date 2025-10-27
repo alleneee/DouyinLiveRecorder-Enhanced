@@ -55,8 +55,16 @@ class VideoConverter:
                 "-y",  # 覆盖已存在的文件
                 str(output_file)
             ]
+            
+            # 打印完整FFmpeg命令（用于调试）
+            cmd_str = ' '.join(
+                f'"{arg}"' if ' ' in str(arg) else str(arg)
+                for arg in cmd
+            )
+            logger.debug(f"{log_context} FFmpeg转换命令:\n{cmd_str}")
 
             # 执行转换
+            logger.debug(f"{log_context} 正在执行FFmpeg格式转换...")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -65,10 +73,15 @@ class VideoConverter:
             )
 
             if result.returncode != 0:
+                # 打印更详细的错误信息
+                stderr_lines = result.stderr.split('\n') if result.stderr else []
+                stderr_preview = '\n'.join(stderr_lines[-50:]) if len(stderr_lines) > 50 else result.stderr
+                
                 logger.error(
                     f"{log_context} FFmpeg格式转换失败: "
                     f"return_code={result.returncode}, "
-                    f"stderr={result.stderr[:500]}"
+                    f"input={input_file.name}\n"
+                    f"stderr输出:\n{stderr_preview}"
                 )
                 return None
 

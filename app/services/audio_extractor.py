@@ -77,21 +77,24 @@ class AudioExtractor:
         else:
             output_path = Path(output_path)
         
-        logger.debug(
-            "开始提取音频",
-            extra={
-                "video": str(video_path),
-                "audio": str(output_path),
-                "format": self.audio_format,
-                "bitrate": self.audio_bitrate
-            }
+        logger.info(
+            f"开始提取音频: video={video_path.name}, "
+            f"format={self.audio_format}, bitrate={self.audio_bitrate}"
         )
         
         try:
             # 构建FFmpeg命令
             cmd = self._build_ffmpeg_command(str(video_path), str(output_path))
             
+            # 打印完整FFmpeg命令（用于调试）
+            cmd_str = ' '.join(
+                f'"{arg}"' if ' ' in str(arg) else str(arg)
+                for arg in cmd
+            )
+            logger.debug(f"FFmpeg音频提取命令:\n{cmd_str}")
+            
             # 执行FFmpeg
+            logger.debug("正在执行FFmpeg音频提取...")
             result = subprocess.run(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -101,12 +104,16 @@ class AudioExtractor:
             )
             
             if result.returncode != 0:
+                # 打印更详细的错误信息
+                stderr_lines = result.stderr.split('\n') if result.stderr else []
+                # 提取最后50行错误信息（更有价值）
+                stderr_preview = '\n'.join(stderr_lines[-50:]) if len(stderr_lines) > 50 else result.stderr
+                
                 logger.error(
-                    "FFmpeg执行失败",
-                    extra={
-                        "returncode": result.returncode,
-                        "stderr": result.stderr[:500]
-                    }
+                    f"FFmpeg音频提取失败: "
+                    f"returncode={result.returncode}, "
+                    f"video={video_path.name}\n"
+                    f"stderr输出:\n{stderr_preview}"
                 )
                 return None
             
@@ -116,12 +123,10 @@ class AudioExtractor:
                 return None
             
             audio_size = output_path.stat().st_size
-            logger.debug(
-                "音频提取成功",
-                extra={
-                    "audio": str(output_path),
-                    "size": audio_size
-                }
+            logger.info(
+                f"音频提取成功: "
+                f"audio={output_path.name}, "
+                f"size={audio_size // 1024 // 1024}MB ({audio_size} bytes)"
             )
             
             # 删除源文件（如果需要）
@@ -135,10 +140,15 @@ class AudioExtractor:
             return str(output_path)
             
         except subprocess.TimeoutExpired:
-            logger.error("FFmpeg执行超时")
+            logger.error(
+                f"FFmpeg音频提取超时(5分钟): video={video_path.name}"
+            )
             return None
         except Exception as e:
-            logger.error(f"音频提取失败: {e}", exc_info=True)
+            logger.error(
+                f"音频提取异常: video={video_path.name}, error={e}",
+                exc_info=True
+            )
             return None
     
     def _build_ffmpeg_command(self, input_path: str, output_path: str) -> list:

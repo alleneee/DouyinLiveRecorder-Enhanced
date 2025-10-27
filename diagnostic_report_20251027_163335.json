@@ -1,0 +1,39 @@
+{
+  "system_info": {
+    "platform": "Darwin",
+    "platform_release": "25.1.0",
+    "platform_version": "Darwin Kernel Version 25.1.0: Tue Oct 14 21:31:58 PDT 2025; root:xnu-12377.41.5~4/RELEASE_ARM64_T6000",
+    "architecture": "arm64",
+    "processor": "arm",
+    "python_version": "3.12.11",
+    "cpu_model": "Apple M1 Max",
+    "total_memory_gb": 32.0
+  },
+  "ffmpeg_info": {
+    "version": "8.0",
+    "version_line": "ffmpeg version 8.0 Copyright (c) 2000-2025 the FFmpeg developers",
+    "has_libx264": true,
+    "has_gpl": true,
+    "configuration": "configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/8.0_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gnutls --enable-gpl --e...",
+    "path": "/opt/homebrew/bin/ffmpeg"
+  },
+  "codec_support": {
+    "libx264": true,
+    "aac": true,
+    "libmp3lame": true,
+    "format_hls": true,
+    "format_segment": true,
+    "format_mpegts": true
+  },
+  "stream_test": {},
+  "recording_test": {
+    "test_source_success": true,
+    "hls_success": true,
+    "hls_segment_count": 1
+  },
+  "issues": [],
+  "recommendations": [
+    "如果在服务器上失败: 检查服务器FFmpeg是否包含相同的编译选项 (--enable-libx264, --enable-gpl)",
+    "ARM架构: 使用 -preset ultrafast 或 -preset fast, 避免使用 medium/slow"
+  ]
+}
