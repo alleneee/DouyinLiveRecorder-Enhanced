@@ -247,6 +247,17 @@ python tests/test_recording_diagnostics.py --test-url "https://live.douyin.com/1
 **修复步骤**:
 
 #### 1. 测试修复方案
+
+**方式1: 使用实时流地址 (推荐)** ⭐
+```bash
+# 自动获取最新流地址并测试
+python tests/test_flv_stream_fix_live.py
+
+# 或指定其他直播间
+python tests/test_flv_stream_fix_live.py "https://live.douyin.com/房间号"
+```
+
+**方式2: 使用诊断报告中的流地址**
 ```bash
 # 从诊断报告复制流地址
 STREAM_URL="<从diagnostic_report_*.json中复制>"
